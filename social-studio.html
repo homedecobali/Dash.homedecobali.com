@@ -820,7 +820,12 @@ function renderSchedule(){
   ];
   const mailGrid=`<div class="grid pl">${header}${mail.map(row).join('')}</div>`;
 
+  // Bij bestelling (02-11): Orderbevestiging = eigen Shopify-notificatie (Liquid, ES/pt-PT/EN, varianten voorraad / pre-order / afhalen);
+  // Verzendbevestiging = bKnX54LxCDQnzRSG; interne melding = Nieuwe online order k5WDQNcQ9KKEHsiT (alleen sourceName=web).
   const events=[
+    {ic:'🧾',n:'Orderbevestiging',w:'bij elke online order · ES / PT / EN · voorraad, pre-order of afhalen'},
+    {ic:'🚚',n:'Verzendbevestiging',w:'bij verzending'},
+    {ic:'🔔',n:'Interne ordermelding',w:'bij online order · intern naar info@'},
     {ic:'👋',n:'Welkomstmail',w:'bij inschrijving · BIENVENIDO10'},
     {ic:'📦',n:'Vervolg na levering',w:'+10 dagen na verzending'},
     {ic:'🙏',n:'Bedankmail',w:'bij 2e bestelling'},
