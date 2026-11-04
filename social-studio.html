@@ -805,14 +805,20 @@ function renderSchedule(){
   const socialGrid=`<div class="grid pl">${header}${social.map(row).join('')}</div>`;
 
   // --- outbound mail: vaste nieuwsbrieven + event-gestuurd ---
+  // Opt-out sinds 03-11 (besluit nieuwsbrief-optout): Propose plant kind newsletter in op vr/di 10:00 (min. 24 u lead),
+  // Scheduler verstuurt via Newsletter Apply; Telegram + Tegenhouden zoals bij de posts.
+  //   Productnieuws: Weekly Product Mailing do 09:00 -> pijplijn -> live vr 10:00
+  //   Verhaal:       Blog Builder vr 14:00          -> pijplijn -> live di 10:00
+  //   Aanbieding:    Aanbieding Nieuwsbrief wo 12:00, om de week, direct verzonden (geen pijplijn)
   const mail=[
-    {lbl:'Nieuwsbrief', col:AMBER, day:{
-      2:[{t:'🏷️ Aanbieding',tm:'12:00',c:AMBER,note:'om de week'}],
-      3:[{t:'🛍️ Productnieuws',tm:'09:00',c:TEAL}],
-      4:[{t:'✉️ Verhaal',tm:'14:00',c:BLUE}]
+    {lbl:'Nieuwsbrief', col:AMBER, sort:true, day:{
+      1:[L('✉️ Verhaal','10:00',BLUE)],
+      2:[{t:'🏷️ Aanbieding',tm:'12:00',c:AMBER,dot:true,note:'om de week · direct'}],
+      3:[P('🛍️ Productnieuws','09:00',TEAL,'vr 10:00')],
+      4:[L('🛍️ Productnieuws','10:00',TEAL), P('✉️ Verhaal','14:00',BLUE,'di 10:00')]
     }}
   ];
-  const mailGrid=`<div class="grid">${header}${mail.map(row).join('')}</div>`;
+  const mailGrid=`<div class="grid pl">${header}${mail.map(row).join('')}</div>`;
 
   const events=[
     {ic:'👋',n:'Welkomstmail',w:'bij inschrijving · BIENVENIDO10'},
@@ -849,9 +855,15 @@ function renderSchedule(){
     <div class="rowhead">
       <span class="cd" style="background:${AMBER}"></span>
       <span class="lbl">Weekschema · outbound mail</span>
-      <span class="fmt">klant-nieuwsbrieven · verzending na goedkeuring</span>
+      <span class="fmt">gestippeld = in de pijplijn · gevuld = verzonden · Europe/Madrid</span>
     </div>
+    <div class="intro"><b>Gestippeld</b> = nieuwsbrief gebouwd en ingepland, nog niet verzonden (tegenhouden kan nog via Telegram); eronder staat wanneer hij uitgaat. <b>Gevuld</b> = het moment waarop de nieuwsbrief naar de klanten gaat. Niets doen = verzenden.</div>
     <div class="schedwrap">${mailGrid}</div>
+    <div class="leg key">
+      <span><span class="lg-live"></span>● gevuld = verzonden naar klanten (ES + PT)</span>
+      <span><span class="lg-pipe"></span>⚙ gestippeld = in de pijplijn (ingepland, nog niet verzonden)</span>
+      <span>Aanbieding gaat direct uit, zonder pijplijn</span>
+    </div>
     <div class="sublabel">Event-gestuurd · geen vaste dag</div>
     <div class="evrow">${evHtml}</div>
   </div>`;
