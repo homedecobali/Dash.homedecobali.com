@@ -42,6 +42,7 @@
   var NAV = [
     { id: "cockpit", label: "Cockpit", items: [
       { id: "cockpit",  label: "KPI",                   url: "kpi.html",   ic: "\u25C9", c: "#00d4ff", kw: "kpi cockpit dashboard home start overzicht" },
+      { id: "z-live",   label: "Live bezoek",           zone: "live",      ic: "\u25C9", c: "#19e3b1", kw: "live bezoekers realtime nu online terugkerend herkomst land pagina dewi assistent chat gebruik" },
       { id: "z-shop",   label: "Paneel Shopify",        zone: "shop",      ic: "S", c: "#2fd47e", kw: "omzet winst orders onverzonden verkoop marge webshop winkel" },
       { id: "z-meta",   label: "Paneel Meta",           zone: "meta",      ic: "M", c: "#ff3f9a", kw: "facebook instagram ads spend mer budget advertenties" },
       { id: "z-google", label: "Paneel Google",         zone: "google",    ic: "G", c: "#4285f4", kw: "google ads pmax roas cpc conversies" },
@@ -70,6 +71,7 @@
   ];
   /* extra palet-doelen (geen menu-item): kaarten binnen de cockpit */
   var CARDS = [
+    { label: "Dewi \u2014 gebruik assistent", zone: "live", anchor: "lv-dewi-nums", kw: "dewi chat assistent gesprekken berichten" },
     { label: "Onverzonden bestellingen", zone: "shop",  anchor: "ro-table",   kw: "open orders verzenden backorder 2602" },
     { label: "Omzet & winst 7 dagen",    zone: "shop",  anchor: "sale-table", kw: "marge kostprijs brutowinst btw" },
     { label: "Actieve advertenties",     zone: "meta",  anchor: "live-table", kw: "ads campagnes weekbudget" },
