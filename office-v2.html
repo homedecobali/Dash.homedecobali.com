@@ -1656,6 +1656,7 @@
     var n = String(name).toUpperCase(), p = ["bookcase", "bookcase", "locker", "sideboard", "cabinet", "cabinet", "cooler", "lamp", "coffee", "board"];
     if (/PLATFORM|DATA|OFFICE/.test(n)) p.push("rack", "rack", "locker", "cabinet");
     if (/MARKETING|SOCIAL|PINTEREST|META|GOOGLE/.test(n)) p.push("board", "lamp", "sideboard");
+    if (/CUSTOMER SERVICE/.test(n)) p.push("lamp", "sideboard", "board");
     if (/MANAGEMENT/.test(n)) p.push("bookcase", "coffee", "sideboard");
     if (/CATALOG|CONTENT/.test(n)) p.push("bookcase", "cabinet", "sideboard");
     return p;
