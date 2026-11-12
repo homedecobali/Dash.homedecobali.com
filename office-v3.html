@@ -1,0 +1,647 @@
+<!doctype html>
+<!--
+  DEWI · office-v3.html — 3D-kantoor (PROTOTYPE, 12-11-2026)
+  ----------------------------------------------------------------------
+  Eén verdieping in echte 3D (three.js r187, lokaal in office-v3-assets/, gescand):
+  alle afdelingen tegen elkaar met gangen ertussen, ramen in de buitenmuren met
+  invallend daglicht, een zwevende Brain boven het plein en vuurballetjes tussen
+  agents en Brain. office-v2.html blijft ongewijzigd bestaan.
+
+  Data (anon-key, alleen lezen — dezelfde views als office-v2):
+    v_office_depts      afdelingen (naam, kleur, volgorde)
+    v_office_agents     agents + status (working / ok / error / silent / paused / idle)
+    dewi_runs_stats_7d  7-daags succes per workflow
+    dewi_runs_public    laatste runs (alleen bij een gekozen agent)
+
+  Opbouw: alles wat een blokje is zit in ÉÉN InstancedMesh (BX), schermen in een
+  tweede (SCR), glas in een derde (GL). Elke werkplek heeft een eigen lokaal assenstelsel
+  (agent zit op de oorsprong en kijkt naar +z); station() zet bureau, stoel, scherm en poppetje.
+  Indeling: layout() — 3 rijen kamers, de twee grootste afdelingen links/rechts van het plein.
+  Daglicht: een onzichtbaar dak werpt schaduw, zodat de zon alleen door de ramen binnenvalt.
+  Vuurballetjes: achtergrondactiviteit gewogen naar runs 24u; een NIEUWE run (last_run_at
+  veranderd sinds de vorige verversing) geeft een salvo.
+  Test zonder Supabase: office-v3.html?demo=1
+-->
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Office v3 · DEWI</title>
+<script src="dewi-config.js"></script>
+<script src="dewi-frame.js"></script>
+<script type="importmap">{"imports":{"three":"./office-v3-assets/three.module.js"}}</script>
+<style>
+  :root{ --bg:#04070d; --panel:#0d1420; --line:#1c2940; --text:#dfe8f5; --muted:#9fb0c8; --cyan:#00d4ff; --green:#4fd1a1; --red:#ff5d5d; --yellow:#ffd400; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:"Segoe UI",system-ui,sans-serif;overflow:hidden}
+  #top{position:absolute;left:0;right:0;top:0;height:52px;display:flex;align-items:center;gap:16px;padding:0 16px;background:var(--bg);border-bottom:1px solid var(--line);z-index:5}
+  #top h1{margin:0;font-size:16px;letter-spacing:.14em;font-weight:700}
+  #top .tag{font-size:11px;letter-spacing:.1em;color:#04070d;background:var(--yellow);padding:2px 7px;border-radius:4px;font-weight:700}
+  #top .sp{flex:1}
+  .stat{display:flex;flex-direction:column;align-items:center;line-height:1.1;min-width:52px}
+  .stat b{font-size:18px}
+  .stat span{font-size:11px;color:var(--muted)}
+  .stat.err b{color:var(--red)} .stat.work b{color:var(--cyan)}
+  .btn{font:inherit;font-size:13px;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;text-decoration:none;min-height:36px;display:inline-flex;align-items:center}
+  .btn:hover,.btn:focus-visible{border-color:var(--cyan);outline:none}
+  #stage{position:absolute;left:0;right:0;top:52px;bottom:0;background:linear-gradient(#b9d6f2,#e9f1f8 55%,#f3f1ea)}
+  #stage canvas{display:block;width:100%;height:100%}
+  #labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+  .lb{position:absolute;left:0;top:0;transform:translate(-50%,-100%);white-space:nowrap;font-size:12px;font-weight:600;color:#1a2233;background:rgba(255,255,255,.94);border-radius:999px;padding:4px 10px 4px 8px;box-shadow:0 2px 8px rgba(20,30,50,.25);display:flex;align-items:center;gap:6px;will-change:transform}
+  .lb i{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
+  .lb.dept{pointer-events:auto;cursor:pointer;font-size:13px;letter-spacing:.05em;border:0;font-family:inherit;min-height:30px}
+  .lb.dept:hover,.lb.dept:focus-visible{outline:2px solid #1a2233}
+  .lb.dept em{font-style:normal;font-weight:400;color:#4b5873}
+  .lb.dept .bad{background:#c81e1e;color:#fff;border-radius:999px;padding:0 7px;font-size:12px}
+  .lb.agent{font-weight:500;font-size:12px;padding:3px 9px}
+  .lb.agent.err{background:#c81e1e;color:#fff}
+  #side{position:absolute;right:12px;top:64px;bottom:12px;width:340px;max-width:calc(100vw - 24px);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;z-index:4;display:none}
+  #side.on{display:block}
+  #side h2{margin:0 28px 2px 0;font-size:17px}
+  #side .dept{font-size:12px;letter-spacing:.08em;color:var(--muted);margin-bottom:10px}
+  #side .x{position:absolute;right:10px;top:10px;width:36px;height:36px;padding:0;justify-content:center}
+  .pill{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:2px 10px;color:#04070d}
+  .kv{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;font-size:13px;margin:12px 0}
+  .kv dt{color:var(--muted)} .kv dd{margin:0}
+  #side h3{font-size:12px;letter-spacing:.1em;color:var(--muted);margin:16px 0 6px}
+  .run{font-size:12.5px;border-top:1px solid var(--line);padding:7px 0;line-height:1.35}
+  .run b{font-weight:600}
+  .run.bad b{color:var(--red)}
+  .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  #legend{position:absolute;left:76px;bottom:12px;background:rgba(13,20,32,.9);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.7;z-index:3;max-width:320px}
+  #legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px}
+  #msg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;font-size:14px;z-index:6}
+  @media (max-width:820px){ #top h1{font-size:13px} .stat.hide-s{display:none} #legend{display:none} #side{left:12px;right:12px;width:auto;top:auto;height:55%} }
+</style>
+</head>
+<body>
+<div id="top">
+  <h1>DEWI OFFICE</h1><span class="tag">V3 PROTOTYPE</span>
+  <div class="sp"></div>
+  <div class="stat"><b id="s-agents">–</b><span>agents</span></div>
+  <div class="stat work"><b id="s-work">–</b><span>bezig</span></div>
+  <div class="stat err"><b id="s-err">–</b><span>fout</span></div>
+  <div class="stat hide-s"><b id="s-runs">–</b><span>runs 24 u</span></div>
+  <button class="btn" id="b-home" type="button">Overzicht</button>
+  <a class="btn" href="office-v2.html">Office v2</a>
+</div>
+<div id="stage"><div id="labels"></div></div>
+<aside id="side" aria-live="polite"></aside>
+<div id="legend">
+  <div><i style="background:#ff8a1f"></i>Vuurbal = activiteit agent ↔ Brain (nieuwe run = salvo)</div>
+  <div><i style="background:#49c6d8"></i>Scherm blauw = in orde · <i style="background:#ff4d4d;margin-left:4px"></i>rood = fout</div>
+  <div>Slepen = draaien · scrollen = zoomen · klik afdeling of agent</div>
+</div>
+<div id="msg">Kantoor wordt opgebouwd…</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from './office-v3-assets/OrbitControls.js';
+
+const CFG = window.DEWI_CONFIG || {};
+const SB_URL = CFG.SUPABASE_URL || 'https://jucubuoftjehwancegma.supabase.co';
+const SB_KEY = CFG.SUPABASE_ANON_KEY || '';
+const N8N = 'https://homedecobali.app.n8n.cloud/workflow/';
+const DEMO = /[?&]demo=1/.test(location.search);
+const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* ---------- data ---------- */
+function rest(path) {
+  return fetch(SB_URL + '/rest/v1/' + path, { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } })
+    .then((r) => { if (!r.ok) throw new Error(path.split('?')[0] + ' ' + r.status); return r.json(); });
+}
+function demoData() {
+  const D = [['MANAGEMENT', '#ffd166', 5], ['META', '#ff3f9a', 11], ['GOOGLE ADS', '#4285f4', 6], ['SOCIAL', '#a78bfa', 27], ['PINTEREST', '#bd081c', 9], ['PLATFORM', '#38bdf8', 17], ['CATALOGUS & CONTENT', '#22c55e', 8], ['MARKETING', '#e31e24', 12], ['DATA & INZICHT', '#f97316', 5], ['OFFICE', '#06b6d4', 7], ['CUSTOMER SERVICE', '#14b8a6', 5]];
+  const depts = [], agents = [];
+  D.forEach((d, i) => {
+    depts.push({ dept_name: d[0], dept_color: d[1], dept_sort: i + 1 });
+    for (let k = 0; k < d[2]; k++) {
+      const h = (i * 31 + k * 17) % 23;
+      agents.push({ agent_id: 'demo-' + i + '-' + k, agent_name: 'Agent ' + (k + 1), workflow_name: 'HDB · DEMO · ' + i + '-' + k, n8n_workflow_id: 'x', dept_name: d[0], dept_sort: i + 1, agent_sort: k, schedule_human: 'Dagelijks 08:00', paused: false, last_run_at: new Date(Date.now() - h * 3600e3).toISOString(), last_success: h !== 7, last_summary: 'Demo-run', runs_24h: h % 5, fails_24h: 0, open_loops: 0, state: h === 7 ? 'error' : h === 3 ? 'working' : h === 11 ? 'idle' : 'ok' });
+    }
+  });
+  return Promise.resolve({ depts, agents, stats: [] });
+}
+function fetchAll() {
+  if (DEMO) return demoData();
+  return Promise.all([
+    rest('v_office_depts?select=dept_name,dept_color,dept_sort&order=dept_sort'),
+    rest('v_office_agents?select=*'),
+    rest('dewi_runs_stats_7d?select=workflow,runs_7d,ok_7d,pct_ok').catch(() => [])
+  ]).then(([depts, agents, stats]) => ({ depts, agents, stats }));
+}
+
+/* ---------- three basis ---------- */
+const stage = $('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+stage.insertBefore(renderer.domElement, stage.firstChild);
+renderer.domElement.setAttribute('aria-label', 'DEWI kantoor in 3D');
+renderer.domElement.setAttribute('role', 'img');
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(30, 1, 1, 400);
+const HOME = { pos: new THREE.Vector3(34, 37, 47), tgt: new THREE.Vector3(0, 1.5, 2) };
+camera.position.copy(HOME.pos);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(HOME.tgt);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.minDistance = 12; controls.maxDistance = 130;
+controls.minPolarAngle = 0.25; controls.maxPolarAngle = 1.18;
+controls.update();
+
+/* licht: hemel + invulling zonder schaduw, zon met schaduw (komt van achter-links, door de ramen) */
+scene.add(new THREE.HemisphereLight(0xe6f0ff, 0xa9a297, 0.95));
+const fill = new THREE.DirectionalLight(0xffffff, 0.5); fill.position.set(30, 40, 35); scene.add(fill);
+const sun = new THREE.DirectionalLight(0xffe9bd, 5.5);
+sun.position.set(-48, 21, -36); sun.target.position.set(0, 0, 0);
+sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096);
+const sc = sun.shadow.camera; sc.left = -42; sc.right = 42; sc.top = 36; sc.bottom = -36; sc.near = 5; sc.far = 140;
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
+scene.add(sun, sun.target);
+
+const W = 50, D = 40, HX = W / 2, HZ = D / 2, COR = 2.6, WALL_H = 3.2;
+const BRAIN_Y = 8.6;
+
+/* ---------- blokjes: één InstancedMesh ---------- */
+const CAP = 9000;
+const unitBox = new THREE.BoxGeometry(1, 1, 1);
+let root, BX, SCR, GL, bxN, scrN, glN, owner, agentsRt, rooms, deptLabels, structKey = '';
+const M = new THREE.Matrix4(), M2 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S3 = new THREE.Vector3(), C = new THREE.Color();
+const IDENT = new THREE.Matrix4();
+
+function compose(base, x, y, z, sx, sy, sz) {
+  M2.compose(V.set(x, y, z), Q.identity(), S3.set(sx, sy, sz));
+  return M.multiplyMatrices(base || IDENT, M2);
+}
+function box(base, x, y, z, sx, sy, sz, color, own) {
+  if (bxN >= CAP) return -1;
+  BX.setMatrixAt(bxN, compose(base, x, y, z, sx, sy, sz));
+  BX.setColorAt(bxN, C.set(color));
+  owner[bxN] = own == null ? -1 : own;
+  return bxN++;
+}
+function glass(x, y, z, sx, sy, sz) { if (glN < 1200) { GL.setMatrixAt(glN++, compose(null, x, y, z, sx, sy, sz)); } }
+function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0); }
+function tint(hex, toWhite) { return '#' + C.set(hex).lerp(new THREE.Color('#ffffff'), toWhite).getHexString(); }
+
+/* ---------- indeling ---------- */
+function needW(n) { return Math.max(6.5, Math.ceil(n / 4) * 1.95 + 2.6); }
+function layout(depts) {
+  const RD = (D - 2 * COR) / 3;
+  const zr = [-HZ, -HZ + RD + COR, -HZ + 2 * (RD + COR)];
+  const bySize = depts.slice().sort((a, b) => b.n - a.n || a.sort - b.sort);
+  const mid = bySize.slice(0, 2).sort((a, b) => a.sort - b.sort);
+  const rest = depts.filter((d) => mid.indexOf(d) < 0).sort((a, b) => a.sort - b.sort);
+  const top = [], bot = []; let st = 0, sb = needW(6) + COR;
+  rest.forEach((d) => { if (st <= sb) { top.push(d); st += needW(d.n) + COR; } else { bot.push(d); sb += needW(d.n) + COR; } });
+  bot.push({ name: 'KANTINE', color: '#e0a458', n: 0, canteen: true, sort: 999 });
+  const out = [];
+  function row(list, z0, door) {
+    const avail = W - (list.length - 1) * COR;
+    const mins = list.map((d) => d.canteen ? needW(6) : needW(d.n));
+    const sum = mins.reduce((a, b) => a + b, 0);
+    let x = -HX;
+    list.forEach((d, i) => {
+      const w = sum > avail ? mins[i] * avail / sum : mins[i] + (avail - sum) * (mins[i] / sum);
+      out.push({ d, x0: x, x1: x + w, z0, z1: z0 + RD, door });
+      x += w + COR;
+    });
+  }
+  row(top, zr[0], 's'); row(bot, zr[2], 'n');
+  const PLZ = 11, seg = (W - PLZ - 2 * COR) / 2;
+  if (mid[0]) out.push({ d: mid[0], x0: -HX, x1: -HX + seg, z0: zr[1], z1: zr[1] + RD, door: 'e' });
+  if (mid[1]) out.push({ d: mid[1], x0: HX - seg, x1: HX, z0: zr[1], z1: zr[1] + RD, door: 'w' });
+  return out;
+}
+
+/* ---------- werkplek ---------- */
+const SKIN = ['#f2c9a0', '#e8b88a', '#c98f62', '#8d5a3b', '#f6d7b8'];
+const HAIR = ['#2b2118', '#5a3a22', '#b5532a', '#d9b25a', '#1c1c20', '#8a8f98'];
+const SCREEN = { working: '#9ffcff', ok: '#49c6d8', error: '#ff4d4d', silent: '#f0b23c', paused: '#1c2430', idle: '#1c2430' };
+function present(a) { return a.state !== 'paused' && a.state !== 'idle'; }
+
+function station(a, idx, x, z, yaw, deptColor) {
+  const base = new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), new THREE.Vector3(1, 1, 1));
+  const h = hash(a.agent_id);
+  // bureau
+  box(base, 0, 0.75, 0.78, 1.7, 0.06, 0.85, '#dcbb8d', idx);
+  box(base, -0.8, 0.36, 0.78, 0.06, 0.72, 0.78, '#2a2f3a', idx);
+  box(base, 0.8, 0.36, 0.78, 0.06, 0.72, 0.78, '#2a2f3a', idx);
+  // scherm
+  box(base, 0, 0.88, 1.04, 0.07, 0.2, 0.07, '#2a2f3a', idx);
+  box(base, 0, 1.17, 1.04, 0.74, 0.46, 0.05, '#20242e', idx);
+  const scr = scrN; SCR.setMatrixAt(scrN, compose(base, 0, 1.17, 1.011, 0.68, 0.4, 0.012)); SCR.setColorAt(scrN++, C.set(SCREEN[a.state] || SCREEN.ok));
+  box(base, 0, 0.79, 0.6, 0.44, 0.02, 0.15, '#2a2f3a', idx);
+  if (h % 3 === 0) box(base, 0.55, 0.83, 0.62, 0.09, 0.11, 0.09, h % 2 ? '#ffffff' : deptColor, idx);
+  if (h % 4 === 1) box(base, -0.52, 0.79, 0.7, 0.24, 0.02, 0.32, '#f4f4f0', idx);
+  // stoel
+  box(base, 0, 0.03, 0, 0.5, 0.05, 0.5, '#23272f', idx);
+  box(base, 0, 0.23, 0, 0.08, 0.38, 0.08, '#23272f', idx);
+  box(base, 0, 0.46, -0.02, 0.5, 0.08, 0.5, '#343a46', idx);
+  box(base, 0, 0.82, -0.28, 0.5, 0.62, 0.07, '#343a46', idx);
+  // poppetje (zit, kijkt naar +z)
+  const skin = SKIN[h % SKIN.length], hair = HAIR[(h >> 3) % HAIR.length];
+  const body = [];
+  body.push(box(base, 0, 0.58, 0.16, 0.36, 0.16, 0.44, '#2c3140', idx));
+  body.push(box(base, 0, 0.3, 0.36, 0.36, 0.42, 0.15, '#2c3140', idx));
+  body.push(box(base, 0, 0.93, 0, 0.46, 0.52, 0.27, deptColor, idx));
+  body.push(box(base, 0, 1.43, 0.02, 0.5, 0.46, 0.46, skin, idx));
+  body.push(box(base, 0, 1.69, 0, 0.54, 0.14, 0.5, hair, idx));
+  body.push(box(base, 0, 1.5, -0.22, 0.54, 0.36, 0.1, hair, idx));
+  body.push(box(base, -0.11, 1.44, 0.255, 0.06, 0.08, 0.02, '#1a1a1e', idx));
+  body.push(box(base, 0.11, 1.44, 0.255, 0.06, 0.08, 0.02, '#1a1a1e', idx));
+  const armL = box(base, -0.29, 0.86, 0.3, 0.12, 0.12, 0.46, deptColor, idx);
+  const armR = box(base, 0.29, 0.86, 0.3, 0.12, 0.12, 0.46, deptColor, idx);
+  body.push(armL, armR);
+  const mats = body.map((i) => { const m = new THREE.Matrix4(); BX.getMatrixAt(i, m); return m; });
+  const head = new THREE.Vector3(0, 1.75, 0).applyMatrix4(base);
+  return { a, idx, base, scr, body, mats, armL, armR, head, pos: new THREE.Vector3(x, 0, z), phase: (h % 100) / 100 * 6.28, shown: true };
+}
+const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+function showBody(rt, on) {
+  if (rt.shown === on) return; rt.shown = on;
+  rt.body.forEach((i, k) => BX.setMatrixAt(i, on ? rt.mats[k] : ZERO));
+  BX.instanceMatrix.needsUpdate = true;
+}
+
+/* ---------- meubels ---------- */
+function plant(x, z, s) {
+  s = s || 1;
+  box(null, x, 0.2 * s, z, 0.42 * s, 0.4 * s, 0.42 * s, '#e9e4da');
+  box(null, x, 0.75 * s, z, 0.1 * s, 0.7 * s, 0.1 * s, '#6b4a2f');
+  box(null, x, 1.25 * s, z, 0.62 * s, 0.5 * s, 0.62 * s, '#3f9b4b');
+  box(null, x + 0.2 * s, 1.65 * s, z - 0.1 * s, 0.44 * s, 0.4 * s, 0.44 * s, '#56b860');
+  box(null, x - 0.18 * s, 1.55 * s, z + 0.16 * s, 0.36 * s, 0.34 * s, 0.36 * s, '#2f8140');
+}
+function cabinet(x, z, alongX) {
+  const w = 1.7, d = 0.42, sx = alongX ? w : d, sz = alongX ? d : w;
+  box(null, x, 0.95, z, sx, 1.9, sz, '#c9a676');
+  const cols = ['#c8472f', '#2f6fd6', '#e9c349', '#3f9b4b', '#f2f2f2', '#7a4fb5'];
+  for (let r = 0; r < 3; r++) for (let k = 0; k < 5; k++) {
+    const o = -0.6 + k * 0.3, y = 0.45 + r * 0.55, col = cols[(k + r * 2) % cols.length];
+    if (alongX) box(null, x + o, y, z + d / 2 + 0.01, 0.2, 0.34, 0.03, col); else box(null, x + d / 2 + 0.01, y, z + o, 0.03, 0.34, 0.2, col);
+  }
+}
+
+/* ---------- gebouw ---------- */
+function partition(xa, za, xb, zb, gap) {
+  // glazen scheidingswand, h 2.3, met optioneel een deuropening in het midden
+  const alongX = Math.abs(xb - xa) > Math.abs(zb - za);
+  const len = alongX ? xb - xa : zb - za, t = 0.08, hh = 2.3;
+  const segs = gap ? [[0, len / 2 - 0.9], [len / 2 + 0.9, len]] : [[0, len]];
+  segs.forEach(([p, q]) => {
+    const c = (p + q) / 2, l = q - p;
+    if (alongX) { glass(xa + c, hh / 2, za, l, hh, t); box(null, xa + c, hh, za, l, 0.07, 0.1, '#5b6475'); }
+    else { glass(xa, hh / 2, za + c, t, hh, l); box(null, xa, hh, za + c, 0.1, 0.07, l, '#5b6475'); }
+    [p, q].forEach((e) => { if (alongX) box(null, xa + e, hh / 2, za, 0.08, hh, 0.1, '#5b6475'); else box(null, xa, hh / 2, za + e, 0.1, hh, 0.08, '#5b6475'); });
+  });
+}
+function building() {
+  // vloerplaat + gangen
+  box(null, 0, -0.2, 0, W + 0.8, 0.4, D + 0.8, '#cfd5de');
+  box(null, 0, -0.45, 0, W + 1.6, 0.1, D + 1.6, '#9aa3b2');
+  // achtermuren met ramen (noord: z=-HZ, west: x=-HX)
+  const wallC = '#eef0f3', frame = '#39414f', T = 0.3, SILL = 0.75, WTOP = 2.7, BAY = 2.5, WW = 1.75;
+  function winWall(alongX) {
+    const len = alongX ? W : D, n = Math.floor(len / BAY), off = (len - n * BAY) / 2;
+    const P = (c, y, l, hgt, col, th) => alongX ? box(null, -HX + c, y, -HZ - T / 2, l, hgt, th || T, col) : box(null, -HX - T / 2, y, -HZ + c, th || T, hgt, l, col);
+    P(len / 2, SILL / 2, len + (alongX ? 2 * T : 0), SILL, wallC);
+    P(len / 2, (WTOP + WALL_H) / 2, len + (alongX ? 2 * T : 0), WALL_H - WTOP, wallC);
+    for (let i = 0; i <= n; i++) {
+      const c = off + i * BAY, l = i === 0 || i === n ? (BAY - WW) / 2 + off : BAY - WW;
+      const cc = i === 0 ? (off + (BAY - WW) / 2) / 2 : i === n ? len - (off + (BAY - WW) / 2) / 2 : c;
+      P(cc, (SILL + WTOP) / 2, l, WTOP - SILL, wallC);
+    }
+    for (let i = 0; i < n; i++) {
+      const c = off + i * BAY + BAY / 2, y = (SILL + WTOP) / 2;
+      P(c, y, 0.06, WTOP - SILL, frame, 0.12);
+      P(c, y, WW, 0.06, frame, 0.12);
+      if (alongX) glass(-HX + c, y, -HZ - T / 2, WW, WTOP - SILL, 0.04); else glass(-HX - T / 2, y, -HZ + c, 0.04, WTOP - SILL, WW);
+    }
+  }
+  winWall(true); winWall(false);
+  // voorzijden: lage glazen pui
+  glass(0, 0.6, HZ + 0.05, W, 1.2, 0.08); box(null, 0, 1.22, HZ + 0.05, W + 0.2, 0.07, 0.14, '#5b6475');
+  glass(HX + 0.05, 0.6, 0, 0.08, 1.2, D); box(null, HX + 0.05, 1.22, 0, 0.14, 0.07, D + 0.2, '#5b6475');
+  for (let x = -HX; x <= HX + 0.01; x += 5) box(null, x, 0.6, HZ + 0.05, 0.1, 1.2, 0.14, '#5b6475');
+  for (let z = -HZ; z <= HZ + 0.01; z += 5) box(null, HX + 0.05, 0.6, z, 0.14, 1.2, 0.1, '#5b6475');
+}
+
+function furnishRoom(r, agents, deptIdx) {
+  const d = r.d, w = r.x1 - r.x0, dz = r.z1 - r.z0, xc = (r.x0 + r.x1) / 2, zc = (r.z0 + r.z1) / 2;
+  // vloer in lichte afdelingskleur + gekleurde rand
+  box(null, xc, 0.01, zc, w, 0.02, dz, d.canteen ? '#c79a66' : tint(d.color, 0.8));
+  const edge = d.color, e = 0.14;
+  box(null, xc, 0.025, r.z0 + e / 2, w, 0.02, e, edge); box(null, xc, 0.025, r.z1 - e / 2, w, 0.02, e, edge);
+  box(null, r.x0 + e / 2, 0.025, zc, e, 0.02, dz, edge); box(null, r.x1 - e / 2, 0.025, zc, e, 0.02, dz, edge);
+  // scheidingswanden (niet waar al een buitenmuur of pui staat)
+  if (r.z0 > -HZ + 0.1) partition(r.x0, r.z0, r.x1, r.z0, r.door === 'n');
+  if (r.z1 < HZ - 0.1) partition(r.x0, r.z1, r.x1, r.z1, r.door === 's');
+  if (r.x0 > -HX + 0.1) partition(r.x0, r.z0, r.x0, r.z1, r.door === 'w');
+  if (r.x1 < HX - 0.1) partition(r.x1, r.z0, r.x1, r.z1, r.door === 'e');
+  if (d.canteen) { canteen(r); return; }
+  // bureaus in banken van twee rijen tegenover elkaar
+  const n = agents.length;
+  let cols = n <= 6 ? Math.ceil(n / 2) : Math.ceil(n / 4);
+  cols = Math.max(1, Math.min(cols, Math.floor((w - 2.2) / 1.95)));
+  const rows = Math.ceil(n / cols), benches = Math.ceil(rows / 2);
+  const pitch = Math.min(4.7, (dz - 2.6) / Math.max(1, benches));
+  agents.forEach((a, i) => {
+    const c = i % cols, rr = Math.floor(i / cols), b = Math.floor(rr / 2), A = rr % 2 === 0;
+    const x = xc + (c - (cols - 1) / 2) * 1.95;
+    const bc = zc + (b - (benches - 1) / 2) * pitch + 0.3;
+    const z = A ? bc - 1.25 : bc + 1.25;
+    agentsRt.push(station(a, agentsRt.length, x, z, A ? 0 : Math.PI, d.color));
+  });
+  // aankleding
+  plant(r.x0 + 0.7, r.z0 + 0.8); plant(r.x1 - 0.7, r.z1 - 0.8, 0.85);
+  if (r.z0 <= -HZ + 0.1) cabinet(xc + (deptIdx % 2 ? 1.6 : -1.6), r.z0 + 0.3, true);
+  else if (r.x0 <= -HX + 0.1) cabinet(r.x0 + 0.3, zc, false);
+  else cabinet(r.x1 - 0.5, r.z1 - 2.2, false);
+}
+function canteen(r) {
+  const xc = (r.x0 + r.x1) / 2, w = r.x1 - r.x0;
+  // keukenblok tegen de gang-zijde
+  box(null, xc, 0.45, r.z0 + 0.6, Math.min(w - 2.4, 5), 0.9, 0.7, '#f1ede6');
+  box(null, xc, 0.93, r.z0 + 0.6, Math.min(w - 2.4, 5) + 0.1, 0.06, 0.8, '#3b414d');
+  [-1.2, -0.4, 0.4].forEach((o) => { box(null, xc + o, 1.2, r.z0 + 0.6, 0.4, 0.5, 0.4, '#b3202f'); box(null, xc + o, 1.02, r.z0 + 0.85, 0.2, 0.1, 0.12, '#ffffff'); });
+  // statafels
+  [[-1.6, 4], [1.4, 4.6]].forEach(([ox, oz]) => { box(null, xc + ox, 0.55, r.z0 + oz, 0.12, 1.1, 0.12, '#3b414d'); box(null, xc + ox, 1.12, r.z0 + oz, 0.9, 0.06, 0.9, '#f1e3cc'); });
+  // loungehoek: banken + tafel
+  const lz = r.z1 - 2.6;
+  const sofa = (x, z, alongX) => { const sx = alongX ? 2.2 : 0.9, sz = alongX ? 0.9 : 2.2; box(null, x, 0.28, z, sx, 0.36, sz, '#b3202f'); if (alongX) box(null, x, 0.62, z - 0.34, sx, 0.5, 0.22, '#9a1a27'); else box(null, x - 0.34, 0.62, z, 0.22, 0.5, sz, '#9a1a27'); box(null, x + (alongX ? 0.5 : 0), 0.56, z + (alongX ? 0 : 0.5), 0.36, 0.2, 0.36, '#e9c349'); };
+  sofa(xc - 0.4, lz - 1.2, true); sofa(xc - 2.3, lz + 0.6, false);
+  box(null, xc + 0.1, 0.22, lz + 0.7, 1.1, 0.06, 1.1, '#f4f4f0'); box(null, xc + 0.1, 0.1, lz + 0.7, 0.2, 0.2, 0.2, '#3b414d');
+  box(null, xc + 1.9, 0.22, lz + 0.5, 0.7, 0.44, 0.7, '#8a8f98');
+  plant(r.x1 - 0.8, r.z1 - 0.9, 1.1); plant(r.x0 + 0.8, r.z0 + 2, 0.9);
+}
+
+/* ---------- Brain + plein ---------- */
+let brain, brainGlow, plazaRing;
+function makeBrain() {
+  brain = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x16407a, emissive: 0x0aa5e6, emissiveIntensity: 0.32, roughness: 0.45, metalness: 0.15, flatShading: true, transparent: true, opacity: 0.9 });
+  const wire = new THREE.LineBasicMaterial({ color: 0x9ff3ff, transparent: true, opacity: 0.45 });
+  [-1, 1].forEach((s) => {
+    const g = new THREE.IcosahedronGeometry(1, 5), p = g.attributes.position, v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i);
+      const n = Math.sin(v.x * 9 + v.y * 4) * Math.sin(v.y * 11 + v.z * 5) + 0.6 * Math.sin(v.z * 13 + v.x * 7);
+      const flat = s * v.x < 0 ? 1 - 0.55 * Math.min(1, -s * v.x * 1.6) : 1; // binnenkant afvlakken: twee helften tegen elkaar
+      v.multiplyScalar(1 + 0.035 * n); v.x *= 0.66 * flat; v.y *= 0.72; v.z *= 1.15; if (v.y < -0.35) v.y = -0.35 + (v.y + 0.35) * 0.45;
+      p.setXYZ(i, v.x, v.y, v.z);
+    }
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, mat); m.position.x = s * 0.4; brain.add(m);
+    const l = new THREE.LineSegments(new THREE.EdgesGeometry(g, 14), wire); l.position.x = s * 0.4; brain.add(l);
+  });
+  const stem = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 1), mat); stem.scale.set(1, 0.8, 1.1); stem.position.set(0, -0.36, -0.7); brain.add(stem);
+  brain.scale.setScalar(2.1); brain.position.set(0, BRAIN_Y, 0);
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128; const g2 = cv.getContext('2d');
+  const gr = g2.createRadialGradient(64, 64, 4, 64, 64, 64); gr.addColorStop(0, 'rgba(140,235,255,0.55)'); gr.addColorStop(0.4, 'rgba(60,190,255,0.28)'); gr.addColorStop(1, 'rgba(60,190,255,0)');
+  g2.fillStyle = gr; g2.fillRect(0, 0, 128, 128);
+  brainGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+  brainGlow.scale.setScalar(9); brainGlow.position.copy(brain.position);
+  const pl = new THREE.PointLight(0x3fd0ff, 26, 20, 1.6); pl.position.set(0, BRAIN_Y - 2.5, 0);
+  plazaRing = new THREE.Mesh(new THREE.RingGeometry(3.6, 3.85, 64), new THREE.MeshBasicMaterial({ color: 0x29c7f5, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
+  plazaRing.rotation.x = -Math.PI / 2; plazaRing.position.set(0, 0.03, 0);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(3.6, 64), new THREE.MeshBasicMaterial({ color: 0x8fe6ff, transparent: true, opacity: 0.22 }));
+  disc.rotation.x = -Math.PI / 2; disc.position.set(0, 0.028, 0);
+  root.add(brain, brainGlow, pl, plazaRing, disc);
+}
+
+/* ---------- vuurballetjes ---------- */
+const FB_MAX = 70, TRAIL = 4;
+let FB, balls = [];
+const BRAIN_P = new THREE.Vector3(0, BRAIN_Y, 0);
+function makeFire() {
+  FB = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), FB_MAX * TRAIL);
+  FB.frustumCulled = false; FB.count = 0; root.add(FB);
+  balls = [];
+}
+function fire(rt, toBrain, delay) {
+  if (balls.length >= FB_MAX) return;
+  const a = toBrain ? rt.head : BRAIN_P, b = toBrain ? BRAIN_P : rt.head;
+  const mid = a.clone().lerp(b, 0.5); mid.y = Math.max(a.y, b.y) * 0.72 + 2.2;
+  balls.push({ a: a.clone(), m: mid, b: b.clone(), t: -(delay || 0), dur: 0.55 + a.distanceTo(b) * 0.012 });
+}
+const P1 = new THREE.Vector3(), P2 = new THREE.Vector3();
+function bez(o, a, m, b, t) { const u = 1 - t; return o.set(u * u * a.x + 2 * u * t * m.x + t * t * b.x, u * u * a.y + 2 * u * t * m.y + t * t * b.y, u * u * a.z + 2 * u * t * m.z + t * t * b.z); }
+function stepFire(dt) {
+  let n = 0;
+  for (let i = balls.length - 1; i >= 0; i--) {
+    const f = balls[i]; f.t += dt;
+    if (f.t >= f.dur + 0.12) { balls.splice(i, 1); continue; }
+    if (f.t < 0) continue;
+    for (let k = 0; k < TRAIL; k++) {
+      const tt = (f.t - k * 0.035) / f.dur; if (tt < 0 || tt > 1) continue;
+      bez(P1, f.a, f.m, f.b, tt);
+      const s = 0.19 * (1 - k * 0.2);
+      FB.setMatrixAt(n, M.compose(P1, Q.identity(), S3.set(s, s, s)));
+      FB.setColorAt(n, k === 0 ? C.setRGB(1, 0.86, 0.35) : C.setRGB(1, 0.5 - k * 0.09, 0.06)); n++;
+    }
+  }
+  FB.count = n; FB.instanceMatrix.needsUpdate = true; if (FB.instanceColor) FB.instanceColor.needsUpdate = true;
+}
+let ambientAcc = 0;
+function ambient(dt) {
+  if (REDUCED || !agentsRt.length) return;
+  ambientAcc += dt;
+  if (ambientAcc < 0.3) return; ambientAcc = 0;
+  let tot = 0; const w = agentsRt.map((rt) => { const x = present(rt.a) ? 0.15 + Math.min(Number(rt.a.runs_24h) || 0, 30) + (rt.a.state === 'working' ? 25 : 0) : 0; tot += x; return x; });
+  let r = Math.random() * tot;
+  for (let i = 0; i < w.length; i++) { r -= w[i]; if (r <= 0) { fire(agentsRt[i], true, 0); fire(agentsRt[i], false, 0.75); break; } }
+}
+function burst(rt) { for (let k = 0; k < 5; k++) { fire(rt, true, k * 0.09); fire(rt, false, 0.8 + k * 0.09); } }
+
+/* ---------- opbouw ---------- */
+function disposeRoot() {
+  if (!root) return;
+  root.traverse((o) => { if (o.geometry && o.geometry !== unitBox) o.geometry.dispose(); if (o.material) { (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); }); } });
+  scene.remove(root); $('labels').innerHTML = '';
+}
+function build(data) {
+  disposeRoot();
+  root = new THREE.Group(); scene.add(root);
+  BX = new THREE.InstancedMesh(unitBox, new THREE.MeshLambertMaterial({ color: 0xffffff }), CAP);
+  BX.castShadow = true; BX.receiveShadow = true; BX.frustumCulled = false;
+  SCR = new THREE.InstancedMesh(unitBox, new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), 400); SCR.frustumCulled = false;
+  GL = new THREE.InstancedMesh(unitBox, new THREE.MeshLambertMaterial({ color: 0xbfe2ff, transparent: true, opacity: 0.2, depthWrite: false }), 1200); GL.frustumCulled = false; GL.renderOrder = 2;
+  bxN = scrN = glN = 0; owner = new Int16Array(CAP).fill(-1); agentsRt = []; deptLabels = [];
+  // grond buiten + onzichtbaar dak dat schaduw werpt (zon komt alleen door de ramen)
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: 0xe9edf2 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.5; ground.receiveShadow = true; root.add(ground);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.7, 0.1, D + 0.7), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
+  roof.position.set(-0.3, WALL_H + 0.05, -0.3); roof.castShadow = true; roof.renderOrder = -1; root.add(roof);
+
+  building();
+  const byDept = {};
+  data.agents.forEach((a) => { (byDept[a.dept_name] = byDept[a.dept_name] || []).push(a); });
+  const depts = data.depts.map((d) => ({ name: d.dept_name, color: d.dept_color || '#8899aa', sort: d.dept_sort || 0, n: (byDept[d.dept_name] || []).length })).filter((d) => d.n > 0);
+  rooms = layout(depts);
+  rooms.forEach((r, i) => {
+    const list = (byDept[r.d.name] || []).slice().sort((a, b) => (a.agent_sort || 0) - (b.agent_sort || 0) || String(a.agent_name).localeCompare(String(b.agent_name)));
+    r.first = agentsRt.length; furnishRoom(r, list, i); r.count = agentsRt.length - r.first;
+    const el = document.createElement('button'); el.type = 'button'; el.className = 'lb dept';
+    el.addEventListener('click', () => focusRoom(r)); $('labels').appendChild(el);
+    r.label = el; r.anchor = new THREE.Vector3((r.x0 + r.x1) / 2, 3.5, (r.z0 + r.z1) / 2);
+  });
+  agentsRt.forEach((rt) => {
+    const el = document.createElement('div'); el.className = 'lb agent'; el.style.display = 'none'; $('labels').appendChild(el);
+    rt.label = el; rt.anchor = rt.head.clone().setY(2.25);
+  });
+  BX.count = bxN; SCR.count = scrN; GL.count = glN;
+  [BX, SCR, GL].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; root.add(m); });
+  makeBrain(); makeFire();
+  sel = null; focus = null; renderSide();
+}
+function keyOf(data) { return data.depts.map((d) => d.dept_name).join('|') + '#' + data.agents.map((a) => a.agent_id).sort().join(','); }
+
+let lastRun = {}, stats7 = {}, first = true;
+function apply(data) {
+  const k = keyOf(data);
+  if (k !== structKey) { structKey = k; build(data); }
+  const byId = {}; data.agents.forEach((a) => { byId[a.agent_id] = a; });
+  stats7 = {}; (data.stats || []).forEach((s) => { stats7[s.workflow] = s; });
+  let work = 0, err = 0, runs = 0;
+  agentsRt.forEach((rt) => {
+    const a = byId[rt.a.agent_id] || rt.a; rt.a = a;
+    SCR.setColorAt(rt.scr, C.set(SCREEN[a.state] || SCREEN.ok));
+    showBody(rt, present(a));
+    if (a.state === 'working') work++; if (a.state === 'error') err++; runs += Number(a.runs_24h) || 0;
+    if (!first && a.last_run_at && lastRun[a.agent_id] && lastRun[a.agent_id] !== a.last_run_at && !REDUCED) burst(rt);
+    lastRun[a.agent_id] = a.last_run_at;
+    rt.label.textContent = a.agent_name; rt.label.className = 'lb agent' + (a.state === 'error' ? ' err' : '');
+  });
+  SCR.instanceColor.needsUpdate = true;
+  rooms.forEach((r) => {
+    let e = 0; for (let i = r.first; i < r.first + r.count; i++) if (agentsRt[i].a.state === 'error') e++;
+    r.label.innerHTML = '<i style="background:' + esc(r.d.color) + '"></i>' + esc(r.d.name) + (r.d.canteen ? ' <em>pauze</em>' : ' <em>' + r.count + '</em>') + (e ? ' <span class="bad">' + e + ' fout</span>' : '');
+    r.label.setAttribute('aria-label', r.d.name + (r.d.canteen ? '' : ', ' + r.count + ' agents' + (e ? ', ' + e + ' fout' : '')) + ' — inzoomen');
+  });
+  $('s-agents').textContent = agentsRt.length; $('s-work').textContent = work; $('s-err').textContent = err; $('s-runs').textContent = runs;
+  first = false; if (sel) renderSide();
+}
+function refresh() {
+  return fetchAll().then((d) => { $('msg').style.display = 'none'; apply(d); })
+    .catch((e) => { if (!agentsRt || !agentsRt.length) { $('msg').style.display = 'block'; $('msg').textContent = 'Data laden mislukt: ' + e.message; } console.warn('[office-v3]', e); });
+}
+
+/* ---------- interactie ---------- */
+let sel = null, focus = null, hover = null, fly = null;
+function flyTo(pos, tgt) { fly = { p0: camera.position.clone(), t0: controls.target.clone(), p1: pos, t1: tgt, t: 0 }; }
+function focusRoom(r) {
+  if (focus === r) { goHome(); return; }
+  focus = r;
+  const t = new THREE.Vector3((r.x0 + r.x1) / 2, 1, (r.z0 + r.z1) / 2);
+  flyTo(t.clone().add(new THREE.Vector3(11, 15, 17)), t);
+}
+function goHome() { focus = null; flyTo(HOME.pos.clone(), HOME.tgt.clone()); }
+$('b-home').addEventListener('click', goHome);
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (sel) { sel = null; renderSide(); } else goHome(); } });
+
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+function pick(ev) {
+  const b = renderer.domElement.getBoundingClientRect();
+  ptr.set(((ev.clientX - b.left) / b.width) * 2 - 1, -((ev.clientY - b.top) / b.height) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const hit = ray.intersectObject(BX, false)[0];
+  if (!hit || hit.instanceId == null) return null;
+  const o = owner[hit.instanceId]; return o >= 0 ? agentsRt[o] : null;
+}
+let downAt = null, lastMove = 0;
+renderer.domElement.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || !BX) return;
+  const rt = pick(e); sel = rt || null; renderSide();
+});
+renderer.domElement.addEventListener('pointermove', (e) => {
+  const now = performance.now(); if (now - lastMove < 60 || !BX || e.buttons) return; lastMove = now;
+  hover = pick(e); renderer.domElement.style.cursor = hover ? 'pointer' : 'grab';
+});
+
+const STATE_NL = { working: ['Bezig', '#00d4ff'], ok: ['In orde', '#4fd1a1'], error: ['Fout', '#ff5d5d'], silent: ['Stil', '#ffd400'], paused: ['Gepauzeerd', '#9fb0c8'], idle: ['Nog nooit gedraaid', '#9fb0c8'] };
+function fmt(ts) { if (!ts) return '—'; const d = new Date(ts); return d.toLocaleString('nl-NL', { timeZone: 'Europe/Madrid', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+let runsFor = null;
+function renderSide() {
+  const el = $('side');
+  if (!sel) { el.className = ''; el.innerHTML = ''; runsFor = null; return; }
+  const a = sel.a, st = STATE_NL[a.state] || [a.state, '#9fb0c8'], s7 = stats7[a.workflow_name];
+  el.className = 'on';
+  el.innerHTML = '<button class="btn x" type="button" id="side-x" aria-label="Sluiten">✕</button>'
+    + '<h2>' + esc(a.agent_name) + '</h2><div class="dept">' + esc(a.dept_name) + '</div>'
+    + '<span class="pill" style="background:' + st[1] + '">' + esc(st[0]) + '</span>'
+    + '<dl class="kv"><dt>Schema</dt><dd>' + esc(a.schedule_human || '—') + '</dd>'
+    + '<dt>Laatste run</dt><dd>' + esc(fmt(a.last_run_at)) + (a.last_run_at ? (a.last_success === false ? ' · mislukt' : ' · gelukt') : '') + '</dd>'
+    + '<dt>Resultaat</dt><dd>' + esc(a.last_summary || '—') + '</dd>'
+    + '<dt>Runs 24 u</dt><dd>' + esc(a.runs_24h) + (Number(a.fails_24h) ? ' · ' + esc(a.fails_24h) + ' fout' : '') + '</dd>'
+    + (s7 ? '<dt>Succes 7 d</dt><dd>' + esc(s7.pct_ok) + '% · ' + esc(s7.ok_7d) + '/' + esc(s7.runs_7d) + '</dd>' : '')
+    + (Number(a.open_loops) ? '<dt>Open loops</dt><dd>' + esc(a.open_loops) + '</dd>' : '') + '</dl>'
+    + '<h3>LAATSTE RUNS</h3><div id="side-runs"><div class="run">Laden…</div></div>'
+    + '<div class="acts">' + (a.n8n_workflow_id && !DEMO ? '<a class="btn" target="_blank" rel="noopener" href="' + N8N + encodeURIComponent(a.n8n_workflow_id) + '">Open in n8n</a>' : '')
+    + '<a class="btn" href="organisation.html?agent=' + encodeURIComponent(a.agent_id) + '">Organigram</a></div>';
+  $('side-x').addEventListener('click', () => { sel = null; renderSide(); });
+  const id = a.agent_id; runsFor = id;
+  const job = DEMO ? Promise.resolve([{ run_at: a.last_run_at, status: a.last_success === false ? 'error' : 'success', summary: a.last_summary }])
+    : rest('dewi_runs_public?select=run_at,status,summary&workflow=eq.' + encodeURIComponent(a.workflow_name) + '&order=run_at.desc&limit=8');
+  job.then((rows) => {
+    if (runsFor !== id || !$('side-runs')) return;
+    $('side-runs').innerHTML = rows.length ? rows.map((r) => { const bad = r.status && r.status !== 'success' && r.status !== 'ok'; return '<div class="run' + (bad ? ' bad' : '') + '"><b>' + esc(fmt(r.run_at)) + (bad ? ' · mislukt' : '') + '</b><br>' + esc(r.summary || '') + '</div>'; }).join('') : '<div class="run">Nog geen runs.</div>';
+  }).catch((e) => { if (runsFor === id && $('side-runs')) $('side-runs').innerHTML = '<div class="run">Runs laden mislukt (' + esc(e.message) + ').</div>'; });
+}
+
+/* ---------- lus ---------- */
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize); resize();
+const PV = new THREE.Vector3();
+function place(el, v, show) {
+  if (!show) { if (el._on !== false) { el.style.display = 'none'; el._on = false; } return; }
+  PV.copy(v).project(camera);
+  if (PV.z > 1 || Math.abs(PV.x) > 1.1 || Math.abs(PV.y) > 1.1) { if (el._on !== false) { el.style.display = 'none'; el._on = false; } return; }
+  if (el._on !== true) { el.style.display = ''; el._on = true; }
+  el.style.transform = 'translate(-50%,-100%) translate(' + ((PV.x * 0.5 + 0.5) * stage.clientWidth).toFixed(1) + 'px,' + ((-PV.y * 0.5 + 0.5) * stage.clientHeight).toFixed(1) + 'px)';
+}
+let lastT = performance.now(), time = 0;
+function frame() {
+  const nowT = performance.now(), dt = Math.min((nowT - lastT) / 1000, 0.05); lastT = nowT; time += dt;
+  if (fly) { fly.t = Math.min(1, fly.t + dt / 0.9); const e = fly.t * fly.t * (3 - 2 * fly.t); camera.position.lerpVectors(fly.p0, fly.p1, e); controls.target.lerpVectors(fly.t0, fly.t1, e); if (fly.t >= 1) fly = null; }
+  controls.update();
+  if (root && agentsRt) {
+    if (brain && !REDUCED) { brain.position.y = BRAIN_Y + Math.sin(time * 0.9) * 0.28; brain.rotation.y = time * 0.25; brainGlow.position.copy(brain.position); brainGlow.material.opacity = 0.8 + Math.sin(time * 2.1) * 0.15; plazaRing.material.opacity = 0.65 + Math.sin(time * 2.1) * 0.2; }
+    if (!REDUCED) {
+      // typen: armen wippen; sneller en hoger bij 'working'
+      for (let i = 0; i < agentsRt.length; i++) {
+        const rt = agentsRt[i]; if (!rt.shown) continue;
+        const wk = rt.a.state === 'working', sp = wk ? 13 : 4.5, amp = wk ? 0.035 : 0.014;
+        BX.setMatrixAt(rt.armL, compose(rt.base, -0.29, 0.86 + Math.max(0, Math.sin(time * sp + rt.phase)) * amp, 0.3, 0.12, 0.12, 0.46));
+        BX.setMatrixAt(rt.armR, compose(rt.base, 0.29, 0.86 + Math.max(0, Math.sin(time * sp + rt.phase + 2.1)) * amp, 0.3, 0.12, 0.12, 0.46));
+      }
+      BX.instanceMatrix.needsUpdate = true;
+    }
+    ambient(dt); if (FB) stepFire(dt);
+    rooms.forEach((r) => { r.anchor.y = focus === r ? 6.2 : 3.5; place(r.label, r.anchor, true); });
+    for (let i = 0; i < agentsRt.length; i++) {
+      const rt = agentsRt[i];
+      const inFocus = focus && i >= focus.first && i < focus.first + focus.count;
+      place(rt.label, rt.anchor, inFocus || rt === hover || rt === sel || rt.a.state === 'error');
+    }
+  }
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+window.__office3 = { get agents() { return agentsRt; }, get rooms() { return rooms; }, focusRoom, goHome, burst, camera, controls };
+refresh().then(() => { setInterval(refresh, 60000); });
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

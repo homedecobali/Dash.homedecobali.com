@@ -1,0 +1,4 @@
+three.js r187 (npm three@0.187.0, MIT), git tag r187 = 456a78fd22f4ce11d929fd62c8579b83be06008a
+npm integrity sha512-Qiu7R+Cmh8CstZsY1uJOSWnVlfo7ZtNLV7mF8Jltk3LB3AtDu9cRZlcnRKkAk8Y4z6KKw35z7Y7Urd7jWY8etA==
+Ongewijzigd overgenomen: build/three.module.js, build/three.core.js, examples/jsm/controls/OrbitControls.js
+Securityscan 12-11-2026: GROEN (zie vault github-intake-security).
