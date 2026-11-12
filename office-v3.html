@@ -1,26 +1,26 @@
 <!doctype html>
 <!--
-  DEWI · office-v3.html — 3D-kantoor (PROTOTYPE, 12-11-2026)
+  DEWI · office-v3.html — 3D-kantoor (PROTOTYPE, 12-11-2026; detailronde 2)
   ----------------------------------------------------------------------
   Eén verdieping in echte 3D (three.js r187, lokaal in office-v3-assets/, gescand):
-  alle afdelingen tegen elkaar met gangen ertussen, ramen in de buitenmuren met
-  invallend daglicht, een zwevende Brain boven het plein en vuurballetjes tussen
-  agents en Brain. office-v2.html blijft ongewijzigd bestaan.
+  afdelingen tegen elkaar met gangen, hoge buitenmuren met grote ramen en invallend daglicht,
+  per afdeling dichte achterwanden met wanddecoratie (grafieken e.d.), props (waterdispenser,
+  kopieerapparaat, kasten, prullenbakken, koffiekopjes, planten), een vergadertafel voor 8 op het
+  plein, de zwevende Brain uit office-v2 (brain-core.mp4) en vuurballetjes agent <-> Brain.
+  Balinees: gong (klinkt bij een online order), tedung-parasols, candi bentar-poort, wachters met
+  poleng, penjor, frangipani, canang sari op bureaus met 7 dagen 100% succes, gesneden deurkozijnen.
+  office-v2.html blijft ongewijzigd bestaan.
 
-  Data (anon-key, alleen lezen — dezelfde views als office-v2):
-    v_office_depts      afdelingen (naam, kleur, volgorde)
-    v_office_agents     agents + status (working / ok / error / silent / paused / idle)
-    dewi_runs_stats_7d  7-daags succes per workflow
-    dewi_runs_public    laatste runs (alleen bij een gekozen agent)
+  Data (anon-key, alleen lezen): v_office_depts, v_office_agents, dewi_runs_stats_7d,
+  dewi_runs_public (bij gekozen agent). Ingelogd (supabase-js-sessie, RLS): bridge_open_orders
+  (source_name = web) voor de gong — zelfde regel als office-v2.
 
-  Opbouw: alles wat een blokje is zit in ÉÉN InstancedMesh (BX), schermen in een
-  tweede (SCR), glas in een derde (GL). Elke werkplek heeft een eigen lokaal assenstelsel
-  (agent zit op de oorsprong en kijkt naar +z); station() zet bureau, stoel, scherm en poppetje.
-  Indeling: layout() — 3 rijen kamers, de twee grootste afdelingen links/rechts van het plein.
-  Daglicht: een onzichtbaar dak werpt schaduw, zodat de zon alleen door de ramen binnenvalt.
-  Vuurballetjes: achtergrondactiviteit gewogen naar runs 24u; een NIEUWE run (last_run_at
-  veranderd sinds de vorige verversing) geeft een salvo.
-  Test zonder Supabase: office-v3.html?demo=1
+  Opbouw: statische blokjes in InstancedMesh BX, bewegende armen in ARM, schermen/lampjes in SCR,
+  glas in GL. Elke werkplek/prop heeft een lokaal assenstelsel (voorkant = +z); wandprops staan met
+  de rug (z=0) tegen de wand. layout() = indeling; furnishRoom() = wanden, bureaus, wandslots.
+  Overleg: 3+ agents met een nieuwe run in dezelfde verversing lopen naar de vergadertafel,
+  zitten ±25 s en lopen terug (meeting()). Daglicht: onzichtbaar dak werpt schaduw.
+  Test zonder Supabase: office-v3.html?demo=1 (toont na enkele seconden een overleg en een order).
 -->
 <html lang="nl">
 <head>
@@ -29,12 +29,14 @@
 <title>Office v3 · DEWI</title>
 <script src="dewi-config.js"></script>
 <script src="dewi-frame.js"></script>
+<!-- alleen voor de ingelogde extra (ordergong); zelfde client als office-v2/kpi -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script type="importmap">{"imports":{"three":"./office-v3-assets/three.module.js"}}</script>
 <style>
   :root{ --bg:#04070d; --panel:#0d1420; --line:#1c2940; --text:#dfe8f5; --muted:#9fb0c8; --cyan:#00d4ff; --green:#4fd1a1; --red:#ff5d5d; --yellow:#ffd400; }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:"Segoe UI",system-ui,sans-serif;overflow:hidden}
-  #top{position:absolute;left:0;right:0;top:0;height:52px;display:flex;align-items:center;gap:16px;padding:0 16px;background:var(--bg);border-bottom:1px solid var(--line);z-index:5}
+  #top{position:absolute;left:0;right:0;top:0;height:52px;display:flex;align-items:center;gap:14px;padding:0 16px;background:var(--bg);border-bottom:1px solid var(--line);z-index:5}
   #top h1{margin:0;font-size:16px;letter-spacing:.14em;font-weight:700}
   #top .tag{font-size:11px;letter-spacing:.1em;color:#04070d;background:var(--yellow);padding:2px 7px;border-radius:4px;font-weight:700}
   #top .sp{flex:1}
@@ -44,7 +46,8 @@
   .stat.err b{color:var(--red)} .stat.work b{color:var(--cyan)}
   .btn{font:inherit;font-size:13px;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;text-decoration:none;min-height:36px;display:inline-flex;align-items:center}
   .btn:hover,.btn:focus-visible{border-color:var(--cyan);outline:none}
-  #stage{position:absolute;left:0;right:0;top:52px;bottom:0;background:linear-gradient(#b9d6f2,#e9f1f8 55%,#f3f1ea)}
+  .btn[aria-pressed="true"]{border-color:var(--yellow);color:var(--yellow)}
+  #stage{position:absolute;left:0;right:0;top:52px;bottom:0;background:linear-gradient(#a9cdf0,#e3eef8 50%,#f3efe4)}
   #stage canvas{display:block;width:100%;height:100%}
   #labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
   .lb{position:absolute;left:0;top:0;transform:translate(-50%,-100%);white-space:nowrap;font-size:12px;font-weight:600;color:#1a2233;background:rgba(255,255,255,.94);border-radius:999px;padding:4px 10px 4px 8px;box-shadow:0 2px 8px rgba(20,30,50,.25);display:flex;align-items:center;gap:6px;will-change:transform}
@@ -55,6 +58,7 @@
   .lb.dept .bad{background:#c81e1e;color:#fff;border-radius:999px;padding:0 7px;font-size:12px}
   .lb.agent{font-weight:500;font-size:12px;padding:3px 9px}
   .lb.agent.err{background:#c81e1e;color:#fff}
+  .lb.meet{background:#1a2233;color:#fff}
   #side{position:absolute;right:12px;top:64px;bottom:12px;width:340px;max-width:calc(100vw - 24px);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;z-index:4;display:none}
   #side.on{display:block}
   #side h2{margin:0 28px 2px 0;font-size:17px}
@@ -68,9 +72,10 @@
   .run b{font-weight:600}
   .run.bad b{color:var(--red)}
   .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-  #legend{position:absolute;left:76px;bottom:12px;background:rgba(13,20,32,.9);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.7;z-index:3;max-width:320px}
+  #legend{position:absolute;left:76px;bottom:12px;background:rgba(13,20,32,.9);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.7;z-index:3;max-width:340px}
   #legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px}
   #msg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;font-size:14px;z-index:6}
+  #toast{position:absolute;left:50%;top:70px;transform:translateX(-50%);background:#1a2233;color:#fff;border:1px solid #d4a53a;border-radius:999px;padding:10px 18px;font-size:14px;font-weight:600;z-index:6;display:none;box-shadow:0 6px 24px rgba(0,0,0,.35)}
   @media (max-width:820px){ #top h1{font-size:13px} .stat.hide-s{display:none} #legend{display:none} #side{left:12px;right:12px;width:auto;top:auto;height:55%} }
 </style>
 </head>
@@ -82,14 +87,17 @@
   <div class="stat work"><b id="s-work">–</b><span>bezig</span></div>
   <div class="stat err"><b id="s-err">–</b><span>fout</span></div>
   <div class="stat hide-s"><b id="s-runs">–</b><span>runs 24 u</span></div>
+  <button class="btn" id="b-snd" type="button" aria-pressed="false" title="Gong bij een online order">♪ Geluid uit</button>
   <button class="btn" id="b-home" type="button">Overzicht</button>
   <a class="btn" href="office-v2.html">Office v2</a>
 </div>
 <div id="stage"><div id="labels"></div></div>
 <aside id="side" aria-live="polite"></aside>
+<div id="toast" role="status"></div>
 <div id="legend">
   <div><i style="background:#ff8a1f"></i>Vuurbal = activiteit agent ↔ Brain (nieuwe run = salvo)</div>
   <div><i style="background:#49c6d8"></i>Scherm blauw = in orde · <i style="background:#ff4d4d;margin-left:4px"></i>rood = fout</div>
+  <div><i style="background:#d4a53a"></i>Gong = online order<span id="lg-auth"></span> · klik de gong om te testen</div>
   <div>Slepen = draaien · scrollen = zoomen · klik afdeling of agent</div>
 </div>
 <div id="msg">Kantoor wordt opgebouwd…</div>
@@ -102,6 +110,7 @@ const CFG = window.DEWI_CONFIG || {};
 const SB_URL = CFG.SUPABASE_URL || 'https://jucubuoftjehwancegma.supabase.co';
 const SB_KEY = CFG.SUPABASE_ANON_KEY || '';
 const N8N = 'https://homedecobali.app.n8n.cloud/workflow/';
+const ASSETS2 = 'office-v2-assets/';
 const DEMO = /[?&]demo=1/.test(location.search);
 const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const $ = (id) => document.getElementById(id);
@@ -114,15 +123,16 @@ function rest(path) {
 }
 function demoData() {
   const D = [['MANAGEMENT', '#ffd166', 5], ['META', '#ff3f9a', 11], ['GOOGLE ADS', '#4285f4', 6], ['SOCIAL', '#a78bfa', 27], ['PINTEREST', '#bd081c', 9], ['PLATFORM', '#38bdf8', 17], ['CATALOGUS & CONTENT', '#22c55e', 8], ['MARKETING', '#e31e24', 12], ['DATA & INZICHT', '#f97316', 5], ['OFFICE', '#06b6d4', 7], ['CUSTOMER SERVICE', '#14b8a6', 5]];
-  const depts = [], agents = [];
+  const depts = [], agents = [], stats = [];
   D.forEach((d, i) => {
     depts.push({ dept_name: d[0], dept_color: d[1], dept_sort: i + 1 });
     for (let k = 0; k < d[2]; k++) {
-      const h = (i * 31 + k * 17) % 23;
-      agents.push({ agent_id: 'demo-' + i + '-' + k, agent_name: 'Agent ' + (k + 1), workflow_name: 'HDB · DEMO · ' + i + '-' + k, n8n_workflow_id: 'x', dept_name: d[0], dept_sort: i + 1, agent_sort: k, schedule_human: 'Dagelijks 08:00', paused: false, last_run_at: new Date(Date.now() - h * 3600e3).toISOString(), last_success: h !== 7, last_summary: 'Demo-run', runs_24h: h % 5, fails_24h: 0, open_loops: 0, state: h === 7 ? 'error' : h === 3 ? 'working' : h === 11 ? 'idle' : 'ok' });
+      const h = (i * 31 + k * 17) % 23, wf = 'HDB · DEMO · ' + i + '-' + k;
+      agents.push({ agent_id: 'demo-' + i + '-' + k, agent_name: 'Agent ' + (k + 1), workflow_name: wf, n8n_workflow_id: 'x', dept_name: d[0], dept_sort: i + 1, agent_sort: k, schedule_human: 'Dagelijks 08:00', paused: false, last_run_at: new Date(Date.now() - h * 3600e3).toISOString(), last_success: h !== 7, last_summary: 'Demo-run', runs_24h: h % 5, fails_24h: 0, open_loops: 0, state: h === 7 ? 'error' : h === 3 ? 'working' : h === 11 ? 'idle' : 'ok' });
+      if (h % 3 === 0) stats.push({ workflow: wf, runs_7d: 7, ok_7d: 7, pct_ok: 100 });
     }
   });
-  return Promise.resolve({ depts, agents, stats: [] });
+  return Promise.resolve({ depts, agents, stats });
 }
 function fetchAll() {
   if (DEMO) return demoData();
@@ -147,34 +157,34 @@ renderer.domElement.setAttribute('role', 'img');
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, 1, 1, 400);
-const HOME = { pos: new THREE.Vector3(34, 37, 47), tgt: new THREE.Vector3(0, 1.5, 2) };
+const HOME = { pos: new THREE.Vector3(36, 42, 50), tgt: new THREE.Vector3(0, 1.5, 2) };
 camera.position.copy(HOME.pos);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.copy(HOME.tgt);
 controls.enableDamping = true; controls.dampingFactor = 0.08;
-controls.minDistance = 12; controls.maxDistance = 130;
-controls.minPolarAngle = 0.25; controls.maxPolarAngle = 1.18;
+controls.minDistance = 8; controls.maxDistance = 130;
+controls.minPolarAngle = 0.25; controls.maxPolarAngle = 1.22;
 controls.update();
 
-/* licht: hemel + invulling zonder schaduw, zon met schaduw (komt van achter-links, door de ramen) */
 scene.add(new THREE.HemisphereLight(0xe6f0ff, 0xa9a297, 0.95));
 const fill = new THREE.DirectionalLight(0xffffff, 0.5); fill.position.set(30, 40, 35); scene.add(fill);
 const sun = new THREE.DirectionalLight(0xffe9bd, 5.5);
-sun.position.set(-48, 21, -36); sun.target.position.set(0, 0, 0);
+sun.position.set(-48, 23, -36); sun.target.position.set(0, 0, 0);
 sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096);
-const sc = sun.shadow.camera; sc.left = -42; sc.right = 42; sc.top = 36; sc.bottom = -36; sc.near = 5; sc.far = 140;
+const sc = sun.shadow.camera; sc.left = -44; sc.right = 44; sc.top = 38; sc.bottom = -38; sc.near = 5; sc.far = 150;
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
 scene.add(sun, sun.target);
 
-const W = 50, D = 40, HX = W / 2, HZ = D / 2, COR = 2.6, WALL_H = 3.2;
-const BRAIN_Y = 8.6;
+const W = 50, D = 40, HX = W / 2, HZ = D / 2, COR = 2.6, WALL_H = 5.0, IW_H = 3.4, PLZ = 11;
+const BRAIN_Y = 10.8;
+const ENTRY_Z = -HZ + 2 * (D - 2 * COR) / 3 + COR * 1.5; // midden van de voorste gang
 
-/* ---------- blokjes: één InstancedMesh ---------- */
-const CAP = 9000;
+/* ---------- blokjes ---------- */
+const CAP = 22000, ACAP = 600, SCAP = 1500, GCAP = 1600;
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
-let root, BX, SCR, GL, bxN, scrN, glN, owner, agentsRt, rooms, deptLabels, structKey = '';
+let root, BX, ARM, SCR, GL, bxN, armN, scrN, glN, owner, ownerA, agentsRt, rooms, structKey = '';
 const M = new THREE.Matrix4(), M2 = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S3 = new THREE.Vector3(), C = new THREE.Color();
-const IDENT = new THREE.Matrix4();
+const IDENT = new THREE.Matrix4(), YAX = new THREE.Vector3(0, 1, 0);
 
 function compose(base, x, y, z, sx, sy, sz) {
   M2.compose(V.set(x, y, z), Q.identity(), S3.set(sx, sy, sz));
@@ -187,9 +197,11 @@ function box(base, x, y, z, sx, sy, sz, color, own) {
   owner[bxN] = own == null ? -1 : own;
   return bxN++;
 }
-function glass(x, y, z, sx, sy, sz) { if (glN < 1200) { GL.setMatrixAt(glN++, compose(null, x, y, z, sx, sy, sz)); } }
+function led(base, x, y, z, sx, sy, sz, color) { if (scrN >= SCAP) return -1; SCR.setMatrixAt(scrN, compose(base, x, y, z, sx, sy, sz)); SCR.setColorAt(scrN, C.set(color)); return scrN++; }
+function glass(base, x, y, z, sx, sy, sz) { if (glN < GCAP) GL.setMatrixAt(glN++, compose(base, x, y, z, sx, sy, sz)); }
+function frame(x, z, yaw) { return new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromAxisAngle(YAX, yaw || 0), new THREE.Vector3(1, 1, 1)); }
 function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0); }
-function tint(hex, toWhite) { return '#' + C.set(hex).lerp(new THREE.Color('#ffffff'), toWhite).getHexString(); }
+function tint(hex, toWhite) { return '#' + new THREE.Color(hex).lerp(new THREE.Color('#ffffff'), toWhite).getHexString(); }
 
 /* ---------- indeling ---------- */
 function needW(n) { return Math.max(6.5, Math.ceil(n / 4) * 1.95 + 2.6); }
@@ -203,21 +215,21 @@ function layout(depts) {
   rest.forEach((d) => { if (st <= sb) { top.push(d); st += needW(d.n) + COR; } else { bot.push(d); sb += needW(d.n) + COR; } });
   bot.push({ name: 'KANTINE', color: '#e0a458', n: 0, canteen: true, sort: 999 });
   const out = [];
-  function row(list, z0, door) {
+  function row(list, z0, door, rowId) {
     const avail = W - (list.length - 1) * COR;
     const mins = list.map((d) => d.canteen ? needW(6) : needW(d.n));
     const sum = mins.reduce((a, b) => a + b, 0);
     let x = -HX;
     list.forEach((d, i) => {
       const w = sum > avail ? mins[i] * avail / sum : mins[i] + (avail - sum) * (mins[i] / sum);
-      out.push({ d, x0: x, x1: x + w, z0, z1: z0 + RD, door });
+      out.push({ d, x0: x, x1: x + w, z0, z1: z0 + RD, door, row: rowId });
       x += w + COR;
     });
   }
-  row(top, zr[0], 's'); row(bot, zr[2], 'n');
-  const PLZ = 11, seg = (W - PLZ - 2 * COR) / 2;
-  if (mid[0]) out.push({ d: mid[0], x0: -HX, x1: -HX + seg, z0: zr[1], z1: zr[1] + RD, door: 'e' });
-  if (mid[1]) out.push({ d: mid[1], x0: HX - seg, x1: HX, z0: zr[1], z1: zr[1] + RD, door: 'w' });
+  row(top, zr[0], 's', 0); row(bot, zr[2], 'n', 2);
+  const seg = (W - PLZ - 2 * COR) / 2;
+  if (mid[0]) out.push({ d: mid[0], x0: -HX, x1: -HX + seg, z0: zr[1], z1: zr[1] + RD, door: 'e', row: 1 });
+  if (mid[1]) out.push({ d: mid[1], x0: HX - seg, x1: HX, z0: zr[1], z1: zr[1] + RD, door: 'w', row: 1 });
   return out;
 }
 
@@ -227,212 +239,446 @@ const HAIR = ['#2b2118', '#5a3a22', '#b5532a', '#d9b25a', '#1c1c20', '#8a8f98'];
 const SCREEN = { working: '#9ffcff', ok: '#49c6d8', error: '#ff4d4d', silent: '#f0b23c', paused: '#1c2430', idle: '#1c2430' };
 function present(a) { return a.state !== 'paused' && a.state !== 'idle'; }
 
-function station(a, idx, x, z, yaw, deptColor) {
-  const base = new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), new THREE.Vector3(1, 1, 1));
-  const h = hash(a.agent_id);
-  // bureau
-  box(base, 0, 0.75, 0.78, 1.7, 0.06, 0.85, '#dcbb8d', idx);
-  box(base, -0.8, 0.36, 0.78, 0.06, 0.72, 0.78, '#2a2f3a', idx);
-  box(base, 0.8, 0.36, 0.78, 0.06, 0.72, 0.78, '#2a2f3a', idx);
-  // scherm
-  box(base, 0, 0.88, 1.04, 0.07, 0.2, 0.07, '#2a2f3a', idx);
-  box(base, 0, 1.17, 1.04, 0.74, 0.46, 0.05, '#20242e', idx);
-  const scr = scrN; SCR.setMatrixAt(scrN, compose(base, 0, 1.17, 1.011, 0.68, 0.4, 0.012)); SCR.setColorAt(scrN++, C.set(SCREEN[a.state] || SCREEN.ok));
-  box(base, 0, 0.79, 0.6, 0.44, 0.02, 0.15, '#2a2f3a', idx);
-  if (h % 3 === 0) box(base, 0.55, 0.83, 0.62, 0.09, 0.11, 0.09, h % 2 ? '#ffffff' : deptColor, idx);
-  if (h % 4 === 1) box(base, -0.52, 0.79, 0.7, 0.24, 0.02, 0.32, '#f4f4f0', idx);
+function canang(b, x, y, z, own) { // Balinees offertje
+  box(b, x, y + 0.012, z, 0.16, 0.024, 0.16, '#5c8a3a', own);
+  box(b, x - 0.035, y + 0.035, z - 0.035, 0.06, 0.03, 0.06, '#f4d03f', own); box(b, x + 0.035, y + 0.035, z - 0.035, 0.06, 0.03, 0.06, '#e84393', own);
+  box(b, x - 0.035, y + 0.035, z + 0.035, 0.06, 0.03, 0.06, '#ffffff', own); box(b, x + 0.035, y + 0.035, z + 0.035, 0.06, 0.03, 0.06, '#7d3c98', own);
+}
+function station(a, idx, x, z, yaw, dept, star) {
+  const b = frame(x, z, yaw), h = hash(a.agent_id), dc = dept.color;
+  // bureau: blad, poten, ladeblok, pc
+  box(b, 0, 0.75, 0.78, 1.7, 0.06, 0.85, '#dcbb8d', idx); box(b, 0, 0.715, 0.78, 1.6, 0.02, 0.78, '#b8996d', idx);
+  box(b, -0.8, 0.36, 0.78, 0.06, 0.72, 0.78, '#2a2f3a', idx); box(b, 0.8, 0.36, 0.78, 0.06, 0.72, 0.78, '#2a2f3a', idx);
+  box(b, 0, 0.5, 1.17, 1.56, 0.36, 0.03, '#b8996d', idx);
+  box(b, 0.5, 0.33, 0.8, 0.42, 0.6, 0.6, '#cfd5de', idx);
+  [0.52, 0.33, 0.14].forEach((y) => { box(b, 0.5, y, 0.495, 0.36, 0.015, 0.02, '#7c8798', idx); box(b, 0.5, y + 0.08, 0.492, 0.12, 0.025, 0.03, '#5b6475', idx); });
+  box(b, -0.55, 0.22, 0.9, 0.2, 0.44, 0.44, '#20242e', idx); led(b, -0.55, 0.38, 0.675, 0.03, 0.03, 0.012, present(a) ? '#4fd1a1' : '#30363f');
+  // scherm(en)
+  const dual = h % 5 === 0, mx = dual ? -0.2 : 0;
+  box(b, mx, 0.8, 1.04, 0.26, 0.03, 0.18, '#2a2f3a', idx); box(b, mx, 0.9, 1.06, 0.06, 0.2, 0.05, '#2a2f3a', idx);
+  box(b, mx, 1.19, 1.04, 0.76, 0.48, 0.05, '#20242e', idx);
+  const scr = led(b, mx, 1.19, 1.011, 0.7, 0.42, 0.012, SCREEN[a.state] || SCREEN.ok);
+  if (dual) { box(b, 0.52, 0.9, 1.0, 0.05, 0.2, 0.05, '#2a2f3a', idx); box(b, 0.52, 1.16, 0.98, 0.5, 0.4, 0.05, '#20242e', idx); led(b, 0.52, 1.16, 0.951, 0.45, 0.34, 0.012, '#2a6f86'); }
+  if (h % 3 === 1) box(b, mx + 0.3, 1.36, 1.008, 0.1, 0.1, 0.012, '#ffe066', idx);
+  // toetsenbord, muis, spullen
+  box(b, mx, 0.79, 0.6, 0.46, 0.02, 0.16, '#2a2f3a', idx); box(b, mx, 0.803, 0.6, 0.42, 0.006, 0.12, '#444b59', idx);
+  box(b, mx + 0.36, 0.795, 0.6, 0.06, 0.03, 0.1, '#e9edf2', idx);
+  if (h % 10 < 7) { const cc = h % 2 ? '#ffffff' : tint(dc, 0.35); box(b, -0.62, 0.83, 0.56, 0.085, 0.1, 0.085, cc, idx); box(b, -0.62, 0.878, 0.56, 0.065, 0.008, 0.065, '#4a2c17', idx); box(b, -0.685, 0.835, 0.56, 0.04, 0.05, 0.02, cc, idx); box(b, -0.62, 0.783, 0.56, 0.14, 0.008, 0.14, '#e9edf2', idx); }
+  if (h % 4 === 1) { box(b, 0.62, 0.79, 0.62, 0.24, 0.02, 0.32, '#f4f4f0', idx); box(b, 0.64, 0.805, 0.6, 0.24, 0.012, 0.32, '#ffffff', idx); box(b, 0.7, 0.82, 0.7, 0.02, 0.015, 0.16, '#2f6fd6', idx); }
+  if (h % 4 === 3) { box(b, 0.66, 0.8, 0.9, 0.16, 0.04, 0.2, '#20242e', idx); box(b, 0.61, 0.835, 0.9, 0.05, 0.035, 0.2, '#2a2f3a', idx); }
+  if (h % 6 === 2) { box(b, -0.66, 0.83, 1.0, 0.11, 0.1, 0.11, '#c8743a', idx); box(b, -0.66, 0.94, 1.0, 0.16, 0.14, 0.16, '#3f9b4b', idx); box(b, -0.63, 1.03, 0.98, 0.09, 0.1, 0.09, '#56b860', idx); }
+  if (h % 7 === 4) { box(b, 0.7, 0.8, 1.0, 0.12, 0.03, 0.12, '#2a2f3a', idx); box(b, 0.7, 0.98, 1.0, 0.025, 0.36, 0.025, '#2a2f3a', idx); box(b, 0.7, 1.15, 0.9, 0.12, 0.05, 0.22, tint(dc, 0.2), idx); led(b, 0.7, 1.12, 0.9, 0.08, 0.012, 0.16, '#fff1c2'); }
+  if (star) canang(b, 0.3, 0.78, 0.98, idx);
+  // prullenbak naast de stoel
+  box(b, -0.66, 0.17, -0.12, 0.26, 0.34, 0.26, '#4b5362', idx); box(b, -0.66, 0.345, -0.12, 0.29, 0.02, 0.29, '#6b7484', idx);
+  if (h % 3 !== 0) { box(b, -0.69, 0.36, -0.1, 0.09, 0.07, 0.09, '#f4f4f0', idx); if (h % 2) box(b, -0.62, 0.37, -0.16, 0.08, 0.06, 0.08, '#ffffff', idx); }
   // stoel
-  box(base, 0, 0.03, 0, 0.5, 0.05, 0.5, '#23272f', idx);
-  box(base, 0, 0.23, 0, 0.08, 0.38, 0.08, '#23272f', idx);
-  box(base, 0, 0.46, -0.02, 0.5, 0.08, 0.5, '#343a46', idx);
-  box(base, 0, 0.82, -0.28, 0.5, 0.62, 0.07, '#343a46', idx);
+  box(b, 0, 0.035, 0, 0.56, 0.04, 0.08, '#23272f', idx); box(b, 0, 0.035, 0, 0.08, 0.04, 0.56, '#23272f', idx);
+  [[-0.26, 0], [0.26, 0], [0, -0.26], [0, 0.26]].forEach(([cx, cz]) => box(b, cx, 0.02, cz, 0.07, 0.04, 0.07, '#111418', idx));
+  box(b, 0, 0.24, 0, 0.07, 0.38, 0.07, '#565e6c', idx);
+  box(b, 0, 0.46, -0.02, 0.5, 0.08, 0.5, '#343a46', idx);
+  box(b, 0, 0.84, -0.28, 0.48, 0.6, 0.07, '#343a46', idx); box(b, 0, 0.56, -0.26, 0.06, 0.16, 0.05, '#23272f', idx);
+  box(b, -0.28, 0.64, -0.04, 0.05, 0.04, 0.3, '#23272f', idx); box(b, 0.28, 0.64, -0.04, 0.05, 0.04, 0.3, '#23272f', idx);
+  box(b, -0.28, 0.56, -0.14, 0.04, 0.14, 0.04, '#23272f', idx); box(b, 0.28, 0.56, -0.14, 0.04, 0.14, 0.04, '#23272f', idx);
   // poppetje (zit, kijkt naar +z)
-  const skin = SKIN[h % SKIN.length], hair = HAIR[(h >> 3) % HAIR.length];
-  const body = [];
-  body.push(box(base, 0, 0.58, 0.16, 0.36, 0.16, 0.44, '#2c3140', idx));
-  body.push(box(base, 0, 0.3, 0.36, 0.36, 0.42, 0.15, '#2c3140', idx));
-  body.push(box(base, 0, 0.93, 0, 0.46, 0.52, 0.27, deptColor, idx));
-  body.push(box(base, 0, 1.43, 0.02, 0.5, 0.46, 0.46, skin, idx));
-  body.push(box(base, 0, 1.69, 0, 0.54, 0.14, 0.5, hair, idx));
-  body.push(box(base, 0, 1.5, -0.22, 0.54, 0.36, 0.1, hair, idx));
-  body.push(box(base, -0.11, 1.44, 0.255, 0.06, 0.08, 0.02, '#1a1a1e', idx));
-  body.push(box(base, 0.11, 1.44, 0.255, 0.06, 0.08, 0.02, '#1a1a1e', idx));
-  const armL = box(base, -0.29, 0.86, 0.3, 0.12, 0.12, 0.46, deptColor, idx);
-  const armR = box(base, 0.29, 0.86, 0.3, 0.12, 0.12, 0.46, deptColor, idx);
-  body.push(armL, armR);
+  const skin = SKIN[h % SKIN.length], hair = HAIR[(h >>> 3) % HAIR.length], style = (h >>> 6) % 4, body = [];
+  const B = (...args) => body.push(box(b, ...args, idx));
+  B(-0.1, 0.58, 0.16, 0.16, 0.16, 0.44, '#2c3140'); B(0.1, 0.58, 0.16, 0.16, 0.16, 0.44, '#2c3140');
+  B(-0.1, 0.32, 0.36, 0.15, 0.4, 0.15, '#2c3140'); B(0.1, 0.32, 0.36, 0.15, 0.4, 0.15, '#2c3140');
+  B(-0.1, 0.07, 0.42, 0.16, 0.1, 0.28, '#1b1e26'); B(0.1, 0.07, 0.42, 0.16, 0.1, 0.28, '#1b1e26');
+  B(0, 0.93, 0, 0.46, 0.52, 0.27, dc); B(0, 1.13, 0.13, 0.2, 0.1, 0.02, tint(dc, 0.5)); B(0, 1.2, 0.01, 0.16, 0.06, 0.16, skin);
+  B(0, 1.45, 0.02, 0.5, 0.46, 0.46, skin);
+  B(0, 1.71, 0, 0.54, 0.14, 0.5, hair); B(0, 1.52, -0.22, 0.54, 0.36, 0.1, hair);
+  if (style === 1) { B(-0.27, 1.42, -0.04, 0.06, 0.5, 0.42, hair); B(0.27, 1.42, -0.04, 0.06, 0.5, 0.42, hair); B(0, 1.2, -0.24, 0.5, 0.3, 0.08, hair); }
+  if (style === 2) B(0, 1.82, -0.14, 0.2, 0.16, 0.2, hair);
+  if (style === 3) B(0, 1.63, 0.2, 0.5, 0.08, 0.1, hair);
+  B(-0.11, 1.47, 0.255, 0.06, 0.08, 0.02, '#1a1a1e'); B(0.11, 1.47, 0.255, 0.06, 0.08, 0.02, '#1a1a1e');
+  B(0, 1.33, 0.255, 0.12, 0.025, 0.02, '#a8553f');
+  if (h % 5 === 2) { B(0, 1.47, 0.27, 0.34, 0.03, 0.015, '#20242e'); B(-0.11, 1.47, 0.272, 0.11, 0.1, 0.01, '#20242e'); B(0.11, 1.47, 0.272, 0.11, 0.1, 0.01, '#20242e'); }
+  if (/CUSTOMER/.test(dept.name)) { B(0, 1.79, 0.02, 0.56, 0.04, 0.06, '#20242e'); B(-0.28, 1.47, 0.02, 0.06, 0.16, 0.14, '#20242e'); B(0.28, 1.47, 0.02, 0.06, 0.16, 0.14, '#20242e'); B(-0.24, 1.36, 0.2, 0.03, 0.03, 0.22, '#20242e'); }
   const mats = body.map((i) => { const m = new THREE.Matrix4(); BX.getMatrixAt(i, m); return m; });
-  const head = new THREE.Vector3(0, 1.75, 0).applyMatrix4(base);
-  return { a, idx, base, scr, body, mats, armL, armR, head, pos: new THREE.Vector3(x, 0, z), phase: (h % 100) / 100 * 6.28, shown: true };
+  // armen + handen in ARM (bewegen)
+  const arm = armN; for (let k = 0; k < 4; k++) ownerA[armN + k] = idx;
+  [dc, dc, skin, skin].forEach((col, k) => ARM.setColorAt(armN + k, C.set(col))); armN += 4;
+  const head = new THREE.Vector3(0, 1.8, 0).applyMatrix4(b);
+  return { a, idx, base: b, scr, body, mats, arm, head, pos: new THREE.Vector3(x, 0, z), yaw, color: dc, skin, hair, phase: (h % 100) / 100 * 6.28, shown: true, away: false };
 }
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+function setArms(rt, t) {
+  if (!rt.shown) { for (let k = 0; k < 4; k++) ARM.setMatrixAt(rt.arm + k, ZERO); return; }
+  const wk = rt.a.state === 'working', sp = wk ? 13 : 4.5, amp = wk ? 0.035 : 0.014;
+  const l = Math.max(0, Math.sin(t * sp + rt.phase)) * amp, r = Math.max(0, Math.sin(t * sp + rt.phase + 2.1)) * amp;
+  ARM.setMatrixAt(rt.arm, compose(rt.base, -0.29, 0.88 + l, 0.26, 0.12, 0.12, 0.4));
+  ARM.setMatrixAt(rt.arm + 1, compose(rt.base, 0.29, 0.88 + r, 0.26, 0.12, 0.12, 0.4));
+  ARM.setMatrixAt(rt.arm + 2, compose(rt.base, -0.27, 0.87 + l, 0.5, 0.11, 0.09, 0.12));
+  ARM.setMatrixAt(rt.arm + 3, compose(rt.base, 0.27, 0.87 + r, 0.5, 0.11, 0.09, 0.12));
+}
 function showBody(rt, on) {
   if (rt.shown === on) return; rt.shown = on;
   rt.body.forEach((i, k) => BX.setMatrixAt(i, on ? rt.mats[k] : ZERO));
-  BX.instanceMatrix.needsUpdate = true;
+  BX.instanceMatrix.needsUpdate = true; setArms(rt, 0); ARM.instanceMatrix.needsUpdate = true;
 }
 
-/* ---------- meubels ---------- */
-function plant(x, z, s) {
+/* ---------- props (lokaal: rug tegen de wand op z=0, voorkant = +z) ---------- */
+function plant(b, x, z, s, kind) {
   s = s || 1;
-  box(null, x, 0.2 * s, z, 0.42 * s, 0.4 * s, 0.42 * s, '#e9e4da');
-  box(null, x, 0.75 * s, z, 0.1 * s, 0.7 * s, 0.1 * s, '#6b4a2f');
-  box(null, x, 1.25 * s, z, 0.62 * s, 0.5 * s, 0.62 * s, '#3f9b4b');
-  box(null, x + 0.2 * s, 1.65 * s, z - 0.1 * s, 0.44 * s, 0.4 * s, 0.44 * s, '#56b860');
-  box(null, x - 0.18 * s, 1.55 * s, z + 0.16 * s, 0.36 * s, 0.34 * s, 0.36 * s, '#2f8140');
-}
-function cabinet(x, z, alongX) {
-  const w = 1.7, d = 0.42, sx = alongX ? w : d, sz = alongX ? d : w;
-  box(null, x, 0.95, z, sx, 1.9, sz, '#c9a676');
-  const cols = ['#c8472f', '#2f6fd6', '#e9c349', '#3f9b4b', '#f2f2f2', '#7a4fb5'];
-  for (let r = 0; r < 3; r++) for (let k = 0; k < 5; k++) {
-    const o = -0.6 + k * 0.3, y = 0.45 + r * 0.55, col = cols[(k + r * 2) % cols.length];
-    if (alongX) box(null, x + o, y, z + d / 2 + 0.01, 0.2, 0.34, 0.03, col); else box(null, x + d / 2 + 0.01, y, z + o, 0.03, 0.34, 0.2, col);
+  box(b, x, 0.22 * s, z, 0.46 * s, 0.44 * s, 0.46 * s, kind === 2 ? '#b98b52' : '#e9e4da'); box(b, x, 0.45 * s, z, 0.4 * s, 0.03, 0.4 * s, '#4a3423');
+  if (kind === 1) { // palm
+    box(b, x, 1.0 * s, z, 0.1 * s, 1.1 * s, 0.1 * s, '#7a5a3a');
+    [[0.36, 0], [-0.36, 0], [0, 0.36], [0, -0.36]].forEach(([ox, oz]) => { box(b, x + ox * s, 1.6 * s, z + oz * s, (ox ? 0.6 : 0.16) * s, 0.06 * s, (oz ? 0.6 : 0.16) * s, '#3f9b4b'); box(b, x + ox * 1.8 * s, 1.48 * s, z + oz * 1.8 * s, (ox ? 0.3 : 0.14) * s, 0.06 * s, (oz ? 0.3 : 0.14) * s, '#2f8140'); });
+    box(b, x, 1.66 * s, z, 0.22 * s, 0.16 * s, 0.22 * s, '#56b860');
+  } else if (kind === 2) { // frangipani
+    box(b, x, 0.85 * s, z, 0.12 * s, 0.8 * s, 0.12 * s, '#8a7663'); box(b, x + 0.22 * s, 1.35 * s, z, 0.1 * s, 0.5 * s, 0.1 * s, '#8a7663'); box(b, x - 0.2 * s, 1.3 * s, z + 0.1 * s, 0.1 * s, 0.4 * s, 0.1 * s, '#8a7663');
+    [[0.24, 1.72, 0], [-0.22, 1.6, 0.12], [0, 1.45, -0.2], [0.05, 1.85, 0.2]].forEach(([ox, y, oz], i) => { box(b, x + ox * s, y * s, z + oz * s, 0.5 * s, 0.3 * s, 0.5 * s, i % 2 ? '#3f9b4b' : '#2f8140'); box(b, x + (ox + 0.14) * s, (y + 0.17) * s, z + (oz + 0.1) * s, 0.12 * s, 0.06 * s, 0.12 * s, '#ffffff'); box(b, x + (ox + 0.14) * s, (y + 0.205) * s, z + (oz + 0.1) * s, 0.05 * s, 0.03 * s, 0.05 * s, '#f4d03f'); box(b, x + (ox - 0.16) * s, (y + 0.17) * s, z + (oz - 0.12) * s, 0.1 * s, 0.05 * s, 0.1 * s, '#fff5f8'); });
+  } else { // monstera
+    box(b, x, 0.8 * s, z, 0.08 * s, 0.7 * s, 0.08 * s, '#4f7a3a');
+    box(b, x, 1.25 * s, z, 0.62 * s, 0.5 * s, 0.62 * s, '#3f9b4b'); box(b, x + 0.22 * s, 1.65 * s, z - 0.1 * s, 0.44 * s, 0.4 * s, 0.44 * s, '#56b860'); box(b, x - 0.2 * s, 1.55 * s, z + 0.18 * s, 0.38 * s, 0.34 * s, 0.38 * s, '#2f8140'); box(b, x + 0.34 * s, 1.05 * s, z + 0.26 * s, 0.3 * s, 0.05 * s, 0.34 * s, '#56b860');
   }
 }
+function waterDispenser(b) {
+  box(b, 0, 0.48, 0.25, 0.38, 0.96, 0.38, '#f4f6f9'); box(b, 0, 0.7, 0.442, 0.3, 0.3, 0.012, '#cfd5de');
+  box(b, -0.07, 0.73, 0.46, 0.05, 0.05, 0.04, '#2f6fd6'); box(b, 0.07, 0.73, 0.46, 0.05, 0.05, 0.04, '#d6352f');
+  box(b, 0, 0.52, 0.47, 0.26, 0.03, 0.1, '#3b414d'); box(b, 0, 0.26, 0.442, 0.3, 0.36, 0.012, '#e3e7ed');
+  box(b, 0, 0.99, 0.25, 0.14, 0.07, 0.14, '#6fb7e6'); box(b, 0, 1.2, 0.25, 0.3, 0.36, 0.3, '#9bd5f7'); box(b, 0, 1.4, 0.25, 0.24, 0.05, 0.24, '#6fb7e6'); box(b, 0, 1.14, 0.25, 0.31, 0.03, 0.31, '#7cc3ee');
+  box(b, 0.25, 0.78, 0.22, 0.09, 0.32, 0.09, '#f4f6f9'); box(b, 0.25, 0.6, 0.22, 0.075, 0.05, 0.075, '#ffffff');
+}
+function copier(b) {
+  box(b, 0, 0.32, 0.38, 0.82, 0.64, 0.64, '#d9dde3'); [0.2, 0.42].forEach((y) => { box(b, 0, y, 0.705, 0.76, 0.015, 0.012, '#8a93a3'); box(b, 0, y - 0.08, 0.71, 0.2, 0.03, 0.02, '#5b6475'); });
+  box(b, 0, 0.78, 0.38, 0.88, 0.28, 0.68, '#eef0f3'); box(b, 0, 0.94, 0.38, 0.88, 0.05, 0.68, '#3b414d');
+  box(b, -0.1, 1.0, 0.34, 0.52, 0.07, 0.4, '#cfd5de'); box(b, -0.1, 1.045, 0.36, 0.3, 0.012, 0.3, '#ffffff');
+  box(b, 0.3, 0.93, 0.68, 0.24, 0.05, 0.12, '#20242e'); led(b, 0.26, 0.96, 0.69, 0.1, 0.012, 0.07, '#7de3ff'); led(b, 0.38, 0.96, 0.7, 0.03, 0.012, 0.03, '#4fd1a1');
+  box(b, -0.58, 0.66, 0.38, 0.3, 0.03, 0.42, '#cfd5de'); box(b, -0.58, 0.69, 0.38, 0.24, 0.03, 0.32, '#ffffff');
+  box(b, 0.62, 0.2, 0.3, 0.3, 0.4, 0.4, '#c49a6c'); box(b, 0.62, 0.41, 0.3, 0.3, 0.012, 0.06, '#e8d9b5');
+}
+function filing(b, n) {
+  for (let i = 0; i < n; i++) {
+    const x = (i - (n - 1) / 2) * 0.52;
+    box(b, x, 0.56, 0.3, 0.5, 1.12, 0.56, i % 2 ? '#aeb6c2' : '#b9c0cb');
+    [0.2, 0.56, 0.92].forEach((y) => { box(b, x, y + 0.17, 0.585, 0.46, 0.012, 0.012, '#7c8798'); box(b, x, y + 0.04, 0.59, 0.16, 0.03, 0.03, '#5b6475'); box(b, x, y - 0.04, 0.585, 0.12, 0.05, 0.008, '#ffffff'); });
+  }
+  box(b, -0.1, 1.17, 0.3, 0.3, 0.1, 0.4, '#c49a6c'); box(b, 0.3, 1.15, 0.28, 0.24, 0.06, 0.32, '#2f6fd6');
+}
+function lowcab(b, variant) {
+  box(b, 0, 0.44, 0.28, 1.6, 0.72, 0.45, '#c9a676'); box(b, 0, 0.82, 0.28, 1.68, 0.04, 0.5, '#8a6a45');
+  box(b, 0, 0.44, 0.51, 0.015, 0.66, 0.012, '#8a6a45'); box(b, -0.1, 0.46, 0.515, 0.03, 0.14, 0.02, '#d4a53a'); box(b, 0.1, 0.46, 0.515, 0.03, 0.14, 0.02, '#d4a53a');
+  [-0.72, 0.72].forEach((x) => { box(b, x, 0.04, 0.1, 0.06, 0.08, 0.06, '#5a3d24'); box(b, x, 0.04, 0.46, 0.06, 0.08, 0.06, '#5a3d24'); });
+  const v = variant % 4;
+  if (v === 0) { // rotan lamp + boeken
+    box(b, -0.45, 0.87, 0.28, 0.14, 0.06, 0.14, '#5a3d24'); box(b, -0.45, 1.08, 0.28, 0.34, 0.36, 0.34, '#d8b98a'); led(b, -0.45, 1.08, 0.28, 0.26, 0.3, 0.35, '#ffd98a'); led(b, -0.45, 1.08, 0.28, 0.35, 0.3, 0.26, '#ffd98a');
+    box(b, 0.4, 0.87, 0.28, 0.3, 0.05, 0.22, '#c8472f'); box(b, 0.42, 0.92, 0.28, 0.26, 0.05, 0.2, '#2f6fd6'); box(b, 0.4, 0.97, 0.28, 0.22, 0.04, 0.18, '#f4f4f0');
+  } else if (v === 1) { // stenen beeldje + canang
+    box(b, -0.4, 0.89, 0.28, 0.26, 0.1, 0.26, '#8d8f8a'); box(b, -0.4, 1.06, 0.28, 0.22, 0.24, 0.2, '#a3a59f'); box(b, -0.4, 1.26, 0.28, 0.16, 0.16, 0.16, '#a3a59f'); box(b, -0.4, 1.37, 0.28, 0.08, 0.07, 0.08, '#8d8f8a'); box(b, -0.4, 0.98, 0.385, 0.24, 0.1, 0.012, '#f4d03f');
+    canang(b, 0.35, 0.84, 0.3);
+  } else if (v === 2) { // manden (HDB)
+    box(b, -0.45, 0.98, 0.28, 0.4, 0.28, 0.36, '#b98b52'); box(b, -0.45, 1.13, 0.28, 0.44, 0.03, 0.4, '#8a6a45'); box(b, 0.1, 0.94, 0.28, 0.3, 0.2, 0.28, '#d8b98a'); box(b, 0.1, 1.05, 0.28, 0.33, 0.025, 0.31, '#b98b52');
+    box(b, 0.55, 0.96, 0.28, 0.14, 0.24, 0.14, '#1fa3a3'); box(b, 0.55, 1.11, 0.28, 0.08, 0.06, 0.08, '#178a8a');
+  } else { plant(b, -0.45, 0.28, 0.42, 0); box(b, 0.35, 0.87, 0.28, 0.36, 0.06, 0.26, '#f4f4f0'); box(b, 0.35, 0.93, 0.28, 0.12, 0.08, 0.12, '#ffffff'); }
+}
+function bookcase(b, products) {
+  box(b, 0, 1.05, 0.06, 1.7, 2.1, 0.04, '#b08d5f'); box(b, -0.83, 1.05, 0.24, 0.05, 2.1, 0.4, '#c9a676'); box(b, 0.83, 1.05, 0.24, 0.05, 2.1, 0.4, '#c9a676');
+  const cols = ['#c8472f', '#2f6fd6', '#e9c349', '#3f9b4b', '#f2f2f2', '#7a4fb5', '#20242e', '#e67e22'];
+  for (let r = 0; r < 5; r++) {
+    const y = 0.04 + r * 0.5; box(b, 0, y, 0.24, 1.62, 0.04, 0.4, '#c9a676');
+    if (r === 4) break;
+    if (products) {
+      const k = r % 4;
+      if (k === 0) { box(b, -0.5, y + 0.16, 0.26, 0.36, 0.26, 0.3, '#b98b52'); box(b, 0, y + 0.13, 0.26, 0.28, 0.2, 0.26, '#d8b98a'); box(b, 0.5, y + 0.18, 0.26, 0.3, 0.3, 0.28, '#8a6a45'); }
+      if (k === 1) { box(b, -0.5, y + 0.2, 0.26, 0.16, 0.34, 0.16, '#1fa3a3'); box(b, -0.15, y + 0.15, 0.26, 0.2, 0.24, 0.2, '#f4f4f0'); box(b, 0.25, y + 0.2, 0.26, 0.14, 0.34, 0.14, '#c8472f'); box(b, 0.6, y + 0.13, 0.26, 0.22, 0.2, 0.2, '#e9c349'); }
+      if (k === 2) { box(b, -0.45, y + 0.12, 0.26, 0.2, 0.18, 0.2, '#d4a53a'); box(b, -0.45, y + 0.27, 0.26, 0.14, 0.14, 0.14, '#d4a53a'); box(b, 0.05, y + 0.19, 0.26, 0.3, 0.32, 0.28, '#fff8ea'); led(b, 0.05, y + 0.19, 0.26, 0.22, 0.26, 0.29, '#ffe3a1'); box(b, 0.55, y + 0.14, 0.26, 0.26, 0.22, 0.24, '#8d8f8a'); }
+      if (k === 3) { ['#7a4fb5', '#c8472f', '#1fa3a3'].forEach((c, i) => box(b, -0.45, y + 0.07 + i * 0.09, 0.26, 0.44, 0.085, 0.34, c)); ['#e9c349', '#2f6fd6'].forEach((c, i) => box(b, 0.35, y + 0.07 + i * 0.09, 0.26, 0.44, 0.085, 0.34, c)); }
+    } else {
+      let x = -0.76; let i = r * 3;
+      while (x < 0.7) { const w = 0.07 + (i * 7 % 5) * 0.012, hh = 0.3 + (i * 5 % 4) * 0.035; if ((i + r) % 9 === 6) { box(b, x + 0.12, y + 0.1, 0.26, 0.2, 0.14, 0.2, '#b98b52'); x += 0.3; } else { box(b, x + w / 2, y + 0.02 + hh / 2, 0.27, w, hh, 0.26, cols[i % cols.length]); x += w + 0.008; } i++; }
+    }
+  }
+}
+function cartons(b) {
+  [[-0.35, 0.25, 0.32, 0.6, 0.5, 0.5], [0.32, 0.2, 0.3, 0.55, 0.4, 0.46], [-0.3, 0.68, 0.3, 0.46, 0.36, 0.42], [0.3, 0.55, 0.3, 0.4, 0.3, 0.36]].forEach(([x, y, z, sx, sy, sz], i) => { box(b, x, y, z, sx, sy, sz, i % 2 ? '#c49a6c' : '#b98b52'); box(b, x, y + sy / 2 + 0.004, z, 0.07, 0.008, sz, '#e8d9b5'); box(b, x, y, z + sz / 2 + 0.004, 0.16, 0.1, 0.008, '#ffffff'); });
+}
+function serverRack(b) {
+  box(b, 0, 1.0, 0.36, 0.72, 2.0, 0.72, '#1f232c'); box(b, 0, 2.02, 0.36, 0.76, 0.04, 0.76, '#2a2f3a');
+  for (let r = 0; r < 9; r++) { const y = 0.22 + r * 0.19; box(b, 0, y, 0.725, 0.62, 0.15, 0.012, '#2e343f'); for (let k = 0; k < 4; k++) led(b, -0.22 + k * 0.07, y + 0.03, 0.735, 0.03, 0.03, 0.01, (r * 3 + k) % 7 === 0 ? '#f0b23c' : (r + k) % 2 ? '#4fd1a1' : '#49c6d8'); box(b, 0.16, y, 0.733, 0.22, 0.05, 0.008, '#15181e'); }
+}
+function wallClock(b) { box(b, 0, 2.95, 0.03, 0.42, 0.42, 0.04, '#20242e'); box(b, 0, 2.95, 0.055, 0.36, 0.36, 0.012, '#ffffff'); box(b, 0, 3.01, 0.065, 0.02, 0.14, 0.008, '#20242e'); box(b, 0.05, 2.95, 0.065, 0.11, 0.02, 0.008, '#c8472f'); }
+
+/* ---------- wanddecoratie (canvas-texturen; decoratief, geen live cijfers) ---------- */
+const artCache = {};
+function artTex(type, color) {
+  const key = type + color; if (artCache[key]) return artCache[key];
+  const cv = document.createElement('canvas'); cv.width = 480; cv.height = 300; const g = cv.getContext('2d'), Wc = 480, Hc = 300;
+  const dark = type === 'server' || type === 'kpi';
+  g.fillStyle = dark ? '#0d1420' : '#ffffff'; g.fillRect(0, 0, Wc, Hc);
+  const ink = dark ? '#dfe8f5' : '#1a2233', soft = dark ? '#1c2940' : '#e6eaf0', pal = [color, '#2f6fd6', '#e9c349', '#3f9b4b', '#e67e22', '#7a4fb5'];
+  const title = (t) => { g.fillStyle = ink; g.font = '700 26px "Segoe UI",sans-serif'; g.fillText(t, 22, 38); g.fillStyle = color; g.fillRect(22, 48, 60, 5); };
+  const axes = () => { g.strokeStyle = soft; g.lineWidth = 2; for (let i = 0; i < 4; i++) { g.beginPath(); g.moveTo(40, 90 + i * 55); g.lineTo(450, 90 + i * 55); g.stroke(); } };
+  if (type === 'bars') { title('RESULTAAT PER WEEK'); axes(); [0.35, 0.5, 0.42, 0.66, 0.6, 0.82, 0.74, 0.95].forEach((v, i) => { g.fillStyle = color; g.globalAlpha = i === 7 ? 1 : 0.55; g.fillRect(56 + i * 50, 258 - v * 180, 32, v * 180); }); g.globalAlpha = 1; }
+  else if (type === 'line') { title('TREND'); axes(); const pts = [0.2, 0.28, 0.24, 0.4, 0.38, 0.55, 0.5, 0.7, 0.66, 0.86]; g.strokeStyle = color; g.lineWidth = 6; g.lineJoin = 'round'; g.beginPath(); pts.forEach((v, i) => { const x = 44 + i * 44, y = 258 - v * 180; i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke(); g.strokeStyle = '#9aa3b2'; g.lineWidth = 3; g.setLineDash([8, 8]); g.beginPath(); pts.forEach((v, i) => { const x = 44 + i * 44, y = 258 - (v * 0.6 + 0.1) * 180; i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke(); g.setLineDash([]); pts.forEach((v, i) => { g.fillStyle = color; g.beginPath(); g.arc(44 + i * 44, 258 - v * 180, 7, 0, 7); g.fill(); }); }
+  else if (type === 'pie') { title('VERDELING'); let a0 = -1.57; [0.42, 0.26, 0.18, 0.14].forEach((v, i) => { g.fillStyle = pal[i]; g.beginPath(); g.moveTo(150, 180); g.arc(150, 180, 95, a0, a0 + v * 6.283); g.fill(); a0 += v * 6.283; g.fillRect(290, 110 + i * 40, 22, 22); g.fillStyle = soft; g.fillRect(322, 114 + i * 40, 110 - i * 14, 14); }); g.fillStyle = '#ffffff'; g.beginPath(); g.arc(150, 180, 48, 0, 7); g.fill(); }
+  else if (type === 'funnel') { title('FUNNEL'); [1, 0.74, 0.5, 0.3].forEach((v, i) => { g.fillStyle = color; g.globalAlpha = 1 - i * 0.2; const w = 380 * v; g.fillRect(240 - w / 2, 78 + i * 52, w, 42); }); g.globalAlpha = 1; }
+  else if (type === 'kpi') { title('KPI'); [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(([cx, cy], i) => { g.fillStyle = '#131c2c'; g.fillRect(22 + cx * 222, 70 + cy * 110, 208, 98); g.fillStyle = pal[i]; g.fillRect(22 + cx * 222, 70 + cy * 110, 8, 98); g.fillStyle = '#31405c'; g.fillRect(44 + cx * 222, 86 + cy * 110, 90, 12); g.fillStyle = pal[i]; g.fillRect(44 + cx * 222, 112 + cy * 110, 130 - i * 14, 30); g.fillStyle = '#4fd1a1'; g.beginPath(); g.moveTo(196 + cx * 222, 136 + cy * 110); g.lineTo(210 + cx * 222, 112 + cy * 110); g.lineTo(224 + cx * 222, 136 + cy * 110); g.fill(); }); }
+  else if (type === 'kanban') { title('PLANBORD'); [0, 1, 2].forEach((c) => { g.fillStyle = soft; g.fillRect(22 + c * 150, 70, 138, 212); for (let i = 0; i < 3 - (c === 2 ? 1 : 0); i++) { g.fillStyle = ['#ffe066', '#ffb3c7', '#b6ecff', '#c8f7c5'][(c + i) % 4]; g.fillRect(32 + c * 150, 82 + i * 66, 118, 54); g.fillStyle = 'rgba(26,34,51,.35)'; g.fillRect(40 + c * 150, 94 + i * 66, 80, 6); g.fillRect(40 + c * 150, 108 + i * 66, 56, 6); } }); }
+  else if (type === 'calendar') { title('WEEKPLANNING'); for (let r = 0; r < 4; r++) for (let c = 0; c < 7; c++) { g.fillStyle = soft; g.fillRect(22 + c * 63, 72 + r * 55, 57, 49); if ((r * 7 + c) % 4 === 1) { g.fillStyle = color; g.fillRect(28 + c * 63, 96 + r * 55, 45, 10); } if ((r * 7 + c) % 5 === 3) { g.fillStyle = '#2f6fd6'; g.fillRect(28 + c * 63, 108 + r * 55, 30, 8); } } }
+  else if (type === 'server') { title('SYSTEEMSTATUS'); for (let r = 0; r < 5; r++) for (let c = 0; c < 10; c++) { g.fillStyle = (r * 10 + c) % 17 === 5 ? '#f0b23c' : '#4fd1a1'; g.globalAlpha = 0.5 + ((r + c) % 3) * 0.25; g.fillRect(22 + c * 44, 72 + r * 44, 36, 36); } g.globalAlpha = 1; }
+  else if (type === 'pins') { g.fillStyle = '#f6f3ee'; g.fillRect(0, 0, Wc, Hc); const hs = [[110, 150], [150, 110], [90, 170], [130, 130], [160, 100]]; hs.forEach((col, c) => { let y = 14; col.forEach((hh, i) => { g.fillStyle = ['#c9a676', '#1fa3a3', '#e8d9b5', '#b98b52', '#3f9b4b', '#c8472f', '#f4d03f'][(c * 2 + i) % 7]; g.fillRect(14 + c * 92, y, 82, hh - 10); g.fillStyle = color; g.beginPath(); g.arc(24 + c * 92, y + 10, 5, 0, 7); g.fill(); y += hh; }); }); }
+  else if (type === 'social') { g.fillStyle = '#f6f3ee'; g.fillRect(0, 0, Wc, Hc); [0, 1, 2].forEach((c) => { g.fillStyle = '#ffffff'; g.fillRect(20 + c * 152, 16, 136, 268); g.fillStyle = ['#c9a676', '#1fa3a3', '#e8b88a'][c]; g.fillRect(28 + c * 152, 46, 120, 150); g.fillStyle = color; g.beginPath(); g.arc(40 + c * 152, 30, 9, 0, 7); g.fill(); g.fillStyle = '#e31e24'; g.beginPath(); g.arc(42 + c * 152, 214, 8, 0, 7); g.fill(); g.fillStyle = '#d7dce4'; g.fillRect(28 + c * 152, 236, 110, 8); g.fillRect(28 + c * 152, 252, 70, 8); }); }
+  else if (type === 'tickets') { title('KLANTVRAGEN'); for (let i = 0; i < 5; i++) { g.fillStyle = soft; g.fillRect(22, 70 + i * 44, 436, 36); g.fillStyle = i < 3 ? '#4fd1a1' : i === 3 ? '#f0b23c' : color; g.beginPath(); g.arc(44, 88 + i * 44, 9, 0, 7); g.fill(); g.fillStyle = 'rgba(26,34,51,.4)'; g.fillRect(66, 82 + i * 44, 220 - i * 22, 10); } }
+  else if (type === 'catalog') { g.fillStyle = '#f6f3ee'; g.fillRect(0, 0, Wc, Hc); for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++) { g.fillStyle = '#ffffff'; g.fillRect(16 + c * 116, 14 + r * 142, 104, 130); g.fillStyle = ['#c9a676', '#1fa3a3', '#b98b52', '#e8d9b5', '#8d8f8a', '#d4a53a', '#c8472f', '#3f9b4b'][r * 4 + c]; g.beginPath(); g.arc(68 + c * 116, 70 + r * 142, 34 - ((r + c) % 3) * 5, 0, 7); g.fill(); g.fillStyle = '#d7dce4'; g.fillRect(28 + c * 116, 118 + r * 142, 70, 8); } }
+  else { // ikat: Balinees weefpatroon
+    const cs = ['#7a2e2e', '#d4a53a', '#1d4e6b', '#f1e3cc', '#3b1f1f']; g.fillStyle = cs[0]; g.fillRect(0, 0, Wc, Hc);
+    for (let r = 0; r < 5; r++) for (let c = 0; c < 8; c++) { const x = 30 + c * 60, y = 30 + r * 60; g.fillStyle = cs[1 + (r + c) % 3]; g.beginPath(); g.moveTo(x, y - 24); g.lineTo(x + 24, y); g.lineTo(x, y + 24); g.lineTo(x - 24, y); g.fill(); g.fillStyle = cs[4]; g.beginPath(); g.moveTo(x, y - 10); g.lineTo(x + 10, y); g.lineTo(x, y + 10); g.lineTo(x - 10, y); g.fill(); }
+    g.fillStyle = cs[1]; g.fillRect(0, 0, Wc, 8); g.fillRect(0, Hc - 8, Wc, 8);
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return (artCache[key] = new THREE.MeshLambertMaterial({ map: t }));
+}
+const artGeo = new THREE.PlaneGeometry(1.9, 1.18);
+function wallArt(b, type, color, y) {
+  y = y || 2.3;
+  box(b, 0, y, 0.035, 2.02, 1.3, 0.05, type === 'ikat' ? '#5a3d24' : '#2a2f3a');
+  const m = new THREE.Mesh(artGeo, artTex(type, color)); m.position.set(0, y, 0.066); m.applyMatrix4(b); m.receiveShadow = true; root.add(m);
+}
+const ART = { 'MANAGEMENT': ['kpi', 'calendar', 'line'], 'META': ['bars', 'funnel', 'pie', 'line'], 'GOOGLE ADS': ['line', 'bars', 'kpi'], 'SOCIAL': ['social', 'calendar', 'pins', 'kanban', 'social', 'bars'], 'PINTEREST': ['pins', 'line', 'pins'], 'PLATFORM': ['server', 'kanban', 'line', 'server', 'kpi'], 'CATALOGUS & CONTENT': ['catalog', 'ikat', 'kanban'], 'MARKETING': ['funnel', 'bars', 'pie', 'line'], 'DATA & INZICHT': ['kpi', 'line', 'bars', 'pie'], 'OFFICE': ['calendar', 'bars', 'kanban'], 'CUSTOMER SERVICE': ['tickets', 'kpi', 'pie'], 'KANTINE': ['ikat', 'ikat'] };
+const PROPS = { 'PLATFORM': ['water', 'server', 'server', 'lowcab', 'copier', 'filing', 'plant'], 'CATALOGUS & CONTENT': ['products', 'water', 'cartons', 'lowcab', 'products', 'plant'], 'OFFICE': ['cartons', 'water', 'copier', 'filing', 'cartons', 'lowcab'], 'DATA & INZICHT': ['filing', 'water', 'lowcab', 'bookcase', 'plant'], 'MANAGEMENT': ['lowcab', 'water', 'bookcase', 'plant', 'filing'] };
+const PROP_DEF = ['water', 'lowcab', 'copier', 'filing', 'plant', 'bookcase', 'lowcab', 'filing', 'plant', 'lowcab'];
 
 /* ---------- gebouw ---------- */
-function partition(xa, za, xb, zb, gap) {
-  // glazen scheidingswand, h 2.3, met optioneel een deuropening in het midden
+function partition(xa, za, xb, zb, gap) { // glas, h 2.3
   const alongX = Math.abs(xb - xa) > Math.abs(zb - za);
   const len = alongX ? xb - xa : zb - za, t = 0.08, hh = 2.3;
   const segs = gap ? [[0, len / 2 - 0.9], [len / 2 + 0.9, len]] : [[0, len]];
   segs.forEach(([p, q]) => {
     const c = (p + q) / 2, l = q - p;
-    if (alongX) { glass(xa + c, hh / 2, za, l, hh, t); box(null, xa + c, hh, za, l, 0.07, 0.1, '#5b6475'); }
-    else { glass(xa, hh / 2, za + c, t, hh, l); box(null, xa, hh, za + c, 0.1, 0.07, l, '#5b6475'); }
-    [p, q].forEach((e) => { if (alongX) box(null, xa + e, hh / 2, za, 0.08, hh, 0.1, '#5b6475'); else box(null, xa, hh / 2, za + e, 0.1, hh, 0.08, '#5b6475'); });
+    if (alongX) { glass(null, xa + c, hh / 2, za, l, hh, t); box(null, xa + c, hh, za, l, 0.07, 0.1, '#5b6475'); box(null, xa + c, 0.05, za, l, 0.1, 0.1, '#5b6475'); }
+    else { glass(null, xa, hh / 2, za + c, t, hh, l); box(null, xa, hh, za + c, 0.1, 0.07, l, '#5b6475'); box(null, xa, 0.05, za + c, 0.1, 0.1, l, '#5b6475'); }
+    const nP = Math.max(1, Math.round(l / 2.4));
+    for (let k = 0; k <= nP; k++) { const e = p + l * k / nP; if (alongX) box(null, xa + e, hh / 2, za, 0.08, hh, 0.1, '#5b6475'); else box(null, xa, hh / 2, za + e, 0.1, hh, 0.08, '#5b6475'); }
   });
 }
+function solidWall(xa, za, xb, zb, gap, color) { // dichte wand h IW_H met gekleurde bovenrand; deur = Balinees gesneden kozijn
+  const alongX = Math.abs(xb - xa) > Math.abs(zb - za);
+  const len = alongX ? xb - xa : zb - za, t = 0.16, wc = '#f3f0ea';
+  const P = (c, y, l, hgt, col, th) => alongX ? box(null, xa + c, y, za, l, hgt, th || t, col) : box(null, xa, y, za + c, th || t, hgt, l, col);
+  const segs = gap ? [[0, len / 2 - 0.95], [len / 2 + 0.95, len]] : [[0, len]];
+  segs.forEach(([p, q]) => { P((p + q) / 2, IW_H / 2, q - p, IW_H, wc); P((p + q) / 2, 0.08, q - p, 0.16, '#cfc8bb', t + 0.03); });
+  P(len / 2, IW_H + 0.07, len + t, 0.14, color, t + 0.06);
+  if (gap) {
+    P(len / 2, (2.35 + IW_H) / 2, 1.9, IW_H - 2.35, wc);
+    [-1, 1].forEach((s) => { P(len / 2 + s * 0.98, 1.2, 0.16, 2.4, '#7a4a2a', t + 0.1); P(len / 2 + s * 0.98, 0.5, 0.2, 0.12, '#d4a53a', t + 0.14); P(len / 2 + s * 0.98, 1.9, 0.2, 0.12, '#d4a53a', t + 0.14); });
+    P(len / 2, 2.45, 2.3, 0.2, '#7a4a2a', t + 0.12); P(len / 2, 2.62, 1.9, 0.14, '#a8322d', t + 0.1); P(len / 2, 2.76, 1.3, 0.14, '#d4a53a', t + 0.1); P(len / 2, 2.9, 0.6, 0.14, '#7a4a2a', t + 0.1);
+  }
+}
 function building() {
-  // vloerplaat + gangen
-  box(null, 0, -0.2, 0, W + 0.8, 0.4, D + 0.8, '#cfd5de');
-  box(null, 0, -0.45, 0, W + 1.6, 0.1, D + 1.6, '#9aa3b2');
-  // achtermuren met ramen (noord: z=-HZ, west: x=-HX)
-  const wallC = '#eef0f3', frame = '#39414f', T = 0.3, SILL = 0.75, WTOP = 2.7, BAY = 2.5, WW = 1.75;
+  box(null, 0, -0.2, 0, W + 0.8, 0.4, D + 0.8, '#cfd5de'); box(null, 0, -0.45, 0, W + 1.8, 0.1, D + 1.8, '#9aa3b2');
+  // tegelvloer
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128; const g = cv.getContext('2d'); g.fillStyle = '#d5dae2'; g.fillRect(0, 0, 128, 128); g.strokeStyle = '#bcc3ce'; g.lineWidth = 3; g.strokeRect(0, 0, 128, 128); g.fillStyle = 'rgba(255,255,255,.25)'; g.fillRect(6, 6, 116, 4);
+  const ft = new THREE.CanvasTexture(cv); ft.wrapS = ft.wrapT = THREE.RepeatWrapping; ft.repeat.set(W / 1.25, D / 1.25); ft.colorSpace = THREE.SRGBColorSpace; ft.anisotropy = 8;
+  const fl = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshLambertMaterial({ map: ft })); fl.rotation.x = -Math.PI / 2; fl.position.y = 0.004; fl.receiveShadow = true; root.add(fl);
+  // hoge achtermuren met grote ramen
+  const wallC = '#eef0f3', fr = '#39414f', T = 0.34, SILL = 0.55, WTOP = 4.35, BAY = 2.5, WW = 1.95;
   function winWall(alongX) {
     const len = alongX ? W : D, n = Math.floor(len / BAY), off = (len - n * BAY) / 2;
     const P = (c, y, l, hgt, col, th) => alongX ? box(null, -HX + c, y, -HZ - T / 2, l, hgt, th || T, col) : box(null, -HX - T / 2, y, -HZ + c, th || T, hgt, l, col);
-    P(len / 2, SILL / 2, len + (alongX ? 2 * T : 0), SILL, wallC);
-    P(len / 2, (WTOP + WALL_H) / 2, len + (alongX ? 2 * T : 0), WALL_H - WTOP, wallC);
+    P(len / 2, SILL / 2, len + (alongX ? 2 * T : 0), SILL, wallC); P(len / 2, (WTOP + WALL_H) / 2, len + (alongX ? 2 * T : 0), WALL_H - WTOP, wallC);
+    P(len / 2, WALL_H + 0.06, len + (alongX ? 2 * T : 0) + 0.1, 0.12, '#cfd5de', T + 0.12); P(len / 2, SILL + 0.03, len, 0.06, '#d9dde3', T + 0.16);
     for (let i = 0; i <= n; i++) {
       const c = off + i * BAY, l = i === 0 || i === n ? (BAY - WW) / 2 + off : BAY - WW;
-      const cc = i === 0 ? (off + (BAY - WW) / 2) / 2 : i === n ? len - (off + (BAY - WW) / 2) / 2 : c;
+      const cc = i === 0 ? l / 2 : i === n ? len - l / 2 : c;
       P(cc, (SILL + WTOP) / 2, l, WTOP - SILL, wallC);
     }
     for (let i = 0; i < n; i++) {
-      const c = off + i * BAY + BAY / 2, y = (SILL + WTOP) / 2;
-      P(c, y, 0.06, WTOP - SILL, frame, 0.12);
-      P(c, y, WW, 0.06, frame, 0.12);
-      if (alongX) glass(-HX + c, y, -HZ - T / 2, WW, WTOP - SILL, 0.04); else glass(-HX - T / 2, y, -HZ + c, 0.04, WTOP - SILL, WW);
+      const c = off + i * BAY + BAY / 2, y = (SILL + WTOP) / 2, hgt = WTOP - SILL;
+      P(c, y, 0.07, hgt, fr, 0.12); P(c, SILL + hgt * 0.36, WW, 0.07, fr, 0.12); P(c, SILL + hgt * 0.72, WW, 0.07, fr, 0.12);
+      P(c - WW / 2 + 0.03, y, 0.06, hgt, fr, 0.14); P(c + WW / 2 - 0.03, y, 0.06, hgt, fr, 0.14); P(c, WTOP - 0.03, WW, 0.06, fr, 0.14);
+      if (alongX) glass(null, -HX + c, y, -HZ - T / 2, WW, hgt, 0.04); else glass(null, -HX - T / 2, y, -HZ + c, 0.04, hgt, WW);
     }
   }
   winWall(true); winWall(false);
-  // voorzijden: lage glazen pui
-  glass(0, 0.6, HZ + 0.05, W, 1.2, 0.08); box(null, 0, 1.22, HZ + 0.05, W + 0.2, 0.07, 0.14, '#5b6475');
-  glass(HX + 0.05, 0.6, 0, 0.08, 1.2, D); box(null, HX + 0.05, 1.22, 0, 0.14, 0.07, D + 0.2, '#5b6475');
-  for (let x = -HX; x <= HX + 0.01; x += 5) box(null, x, 0.6, HZ + 0.05, 0.1, 1.2, 0.14, '#5b6475');
-  for (let z = -HZ; z <= HZ + 0.01; z += 5) box(null, HX + 0.05, 0.6, z, 0.14, 1.2, 0.1, '#5b6475');
+  // voorzijden: lage glazen pui; ingang aan de oostkant, aan het eind van de voorste gang
+  glass(null, 0, 0.6, HZ + 0.05, W, 1.2, 0.08); box(null, 0, 1.22, HZ + 0.05, W + 0.2, 0.07, 0.14, '#5b6475'); box(null, 0, 0.05, HZ + 0.05, W + 0.2, 0.1, 0.14, '#5b6475');
+  [[-HZ, ENTRY_Z - 1.3], [ENTRY_Z + 1.3, HZ]].forEach(([a, c]) => { glass(null, HX + 0.05, 0.6, (a + c) / 2, 0.08, 1.2, c - a); box(null, HX + 0.05, 1.22, (a + c) / 2, 0.14, 0.07, c - a, '#5b6475'); box(null, HX + 0.05, 0.05, (a + c) / 2, 0.14, 0.1, c - a, '#5b6475'); [a, c].forEach((z) => box(null, HX + 0.05, 0.6, z, 0.14, 1.2, 0.1, '#5b6475')); });
+  for (let x = -HX; x <= HX + 0.01; x += 2.5) box(null, x, 0.6, HZ + 0.05, 0.1, 1.2, 0.14, '#5b6475');
+  for (let z = -HZ; z <= HZ + 0.01; z += 2.5) if (Math.abs(z - ENTRY_Z) > 1.4) box(null, HX + 0.05, 0.6, z, 0.14, 1.2, 0.1, '#5b6475');
 }
 
-function furnishRoom(r, agents, deptIdx) {
+/* ---------- Balinese elementen ---------- */
+function tedung(x, z, col) { // ceremoniële parasol
+  const b = frame(x, z, 0);
+  box(b, 0, 0.06, 0, 0.4, 0.12, 0.4, '#8d8f8a'); box(b, 0, 1.5, 0, 0.07, 2.9, 0.07, '#7a4a2a');
+  box(b, 0, 2.95, 0, 1.5, 0.08, 1.5, col); box(b, 0, 3.06, 0, 1.1, 0.14, 1.1, col); box(b, 0, 3.2, 0, 0.6, 0.14, 0.6, col); box(b, 0, 3.36, 0, 0.14, 0.2, 0.14, '#d4a53a');
+  box(b, 0, 2.86, 0.74, 1.5, 0.12, 0.03, '#d4a53a'); box(b, 0, 2.86, -0.74, 1.5, 0.12, 0.03, '#d4a53a'); box(b, 0.74, 2.86, 0, 0.03, 0.12, 1.5, '#d4a53a'); box(b, -0.74, 2.86, 0, 0.03, 0.12, 1.5, '#d4a53a');
+  for (let i = -3; i <= 3; i++) { box(b, i * 0.22, 2.74, 0.75, 0.05, 0.14, 0.02, '#a8322d'); box(b, i * 0.22, 2.74, -0.75, 0.05, 0.14, 0.02, '#a8322d'); box(b, 0.75, 2.74, i * 0.22, 0.02, 0.14, 0.05, '#a8322d'); box(b, -0.75, 2.74, i * 0.22, 0.02, 0.14, 0.05, '#a8322d'); }
+}
+function guardian(b) { // stenen wachter met poleng
+  box(b, 0, 0.2, 0, 0.9, 0.4, 0.9, '#8d8f8a'); box(b, 0, 0.44, 0, 0.74, 0.08, 0.74, '#77796f');
+  box(b, 0, 0.82, 0, 0.56, 0.7, 0.46, '#a3a59f'); box(b, 0, 1.36, 0, 0.5, 0.4, 0.44, '#a3a59f'); box(b, 0, 1.64, 0, 0.36, 0.18, 0.36, '#8d8f8a'); box(b, 0, 1.78, 0, 0.18, 0.14, 0.18, '#77796f');
+  box(b, -0.12, 1.4, 0.225, 0.1, 0.1, 0.02, '#ffffff'); box(b, 0.12, 1.4, 0.225, 0.1, 0.1, 0.02, '#ffffff'); box(b, 0, 1.25, 0.225, 0.26, 0.06, 0.02, '#f4f4f0');
+  box(b, -0.36, 0.95, 0.1, 0.16, 0.5, 0.2, '#a3a59f'); box(b, 0.36, 0.95, 0.1, 0.16, 0.5, 0.2, '#a3a59f');
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 5; c++) box(b, -0.24 + c * 0.12, 0.54 + r * 0.12, 0.236, 0.12, 0.12, 0.014, (r + c) % 2 ? '#1a1a1e' : '#f4f4f0'); // poleng
+  box(b, 0.27, 1.5, 0.1, 0.1, 0.1, 0.06, '#d6352f'); canang(b, 0, 0.48, 0.5);
+}
+function candiBentar(x, z, yaw) { // gespleten poort (doorgang langs lokale z)
+  const g = frame(x, z, yaw);
+  [-1, 1].forEach((s) => {
+    const b = g.clone().multiply(frame(s * 2.05, 0, 0));
+    for (let i = 0; i < 7; i++) { const w = 1.5 - i * 0.18, hh = 0.55; box(b, -s * (1.5 - w) / 2, 0.3 + i * hh, 0, w, hh, 1.0 - i * 0.07, i % 2 ? '#9a6b52' : '#8a5a44'); box(b, -s * (1.5 - w) / 2 + s * 0.05, 0.3 + i * hh + hh / 2, 0, w + 0.1, 0.07, 1.06 - i * 0.07, '#6e6f6a'); }
+    box(b, -s * 0.54, 4.25, 0, 0.26, 0.4, 0.26, '#6e6f6a'); box(b, -s * 0.54, 4.5, 0, 0.12, 0.2, 0.12, '#d4a53a');
+    box(b, -s * 0.74, 1.0, 0.52, 0.03, 1.2, 0.06, '#d4a53a');
+  });
+  for (let i = 0; i < 3; i++) box(g, 0, -0.36 + i * 0.12, 1.4 - i * 0.4, 2.6, 0.12, 0.4, '#b7b9b3');
+  return g;
+}
+function penjor(b, s) { // gebogen bamboe met versiering
+  box(b, 0, 0.1, 0, 0.3, 0.2, 0.3, '#8d8f8a');
+  for (let i = 0; i < 26; i++) { const t = i / 25, ox = s * Math.pow(t, 2.6) * 2.4, y = 0.3 + t * 7.0 - Math.pow(t, 4) * 0.9; box(b, ox, y, 0, 0.09 - t * 0.04, 0.3, 0.09 - t * 0.04, i % 5 === 4 ? '#b9a25a' : '#d8c66a'); if (i > 6 && i % 3 === 0) box(b, ox - s * 0.12, y, 0, 0.22, 0.05, 0.05, '#f4e7a8'); }
+  box(b, s * 2.4, 6.0, 0, 0.04, 0.9, 0.04, '#f4e7a8'); box(b, s * 2.4, 5.4, 0, 0.3, 0.36, 0.06, '#f4e7a8'); box(b, s * 2.4, 5.15, 0, 0.16, 0.16, 0.06, '#d4a53a');
+}
+const GONG = [0, -4.9];
+let gongDisc, gongSwing = 0;
+function gongStand(x, z) {
+  const b = frame(x, z, 0);
+  box(b, 0, 0.08, 0, 2.3, 0.16, 0.7, '#5a3d24'); [-1, 1].forEach((s) => { box(b, s * 0.95, 1.2, 0, 0.16, 2.2, 0.16, '#7a4a2a'); box(b, s * 0.95, 0.4, 0, 0.26, 0.16, 0.26, '#d4a53a'); box(b, s * 0.95, 2.0, 0, 0.26, 0.12, 0.26, '#d4a53a'); box(b, s * 1.12, 2.42, 0, 0.3, 0.12, 0.12, '#a8322d'); });
+  box(b, 0, 2.36, 0, 2.4, 0.18, 0.2, '#7a4a2a'); box(b, 0, 2.5, 0, 1.6, 0.12, 0.16, '#a8322d'); box(b, 0, 2.62, 0, 0.8, 0.12, 0.14, '#d4a53a');
+  box(b, -0.3, 2.14, 0, 0.03, 0.3, 0.03, '#3b2a1a'); box(b, 0.3, 2.14, 0, 0.03, 0.3, 0.03, '#3b2a1a');
+  box(b, 1.5, 0.5, 0.2, 0.06, 0.8, 0.06, '#5a3d24'); box(b, 1.5, 0.95, 0.2, 0.16, 0.16, 0.16, '#a8322d'); // klopper
+  canang(b, -0.6, 0.16, 0.24); canang(b, 0.6, 0.16, 0.24);
+  gongDisc = new THREE.Group(); gongDisc.position.set(x, 2.0, z);
+  const gold = new THREE.MeshStandardMaterial({ color: 0xc9962e, metalness: 0.85, roughness: 0.32 }), dk = new THREE.MeshStandardMaterial({ color: 0x7d5a18, metalness: 0.8, roughness: 0.4 });
+  const d1 = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.1, 32), gold); d1.rotation.x = Math.PI / 2; d1.position.y = -0.82;
+  const d2 = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.06, 8, 32), dk); d2.position.y = -0.82;
+  const d3 = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 12), gold); d3.scale.z = 0.6; d3.position.set(0, -0.82, 0.08);
+  const d4 = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.025, 6, 32), dk); d4.position.set(0, -0.82, 0.055);
+  [d1, d2, d3, d4].forEach((m) => { m.castShadow = true; gongDisc.add(m); }); root.add(gongDisc);
+}
+
+/* ---------- vergadertafel voor 8 ---------- */
+const SEATS = [[-1.3, -1.25, 0], [0, -1.25, 0], [1.3, -1.25, 0], [-1.3, 1.25, Math.PI], [0, 1.25, Math.PI], [1.3, 1.25, Math.PI], [-2.8, 0, Math.PI / 2], [2.8, 0, -Math.PI / 2]];
+function meetingTable() {
+  box(null, 0, 0.012, 0, 7.4, 0.02, 4.4, '#7a2e2e'); box(null, 0, 0.018, 0, 6.9, 0.02, 3.9, '#c9a676'); // geweven kleed
+  for (let i = -5; i <= 5; i++) { box(null, i * 0.62, 0.024, 1.75, 0.3, 0.02, 0.3, i % 2 ? '#1d4e6b' : '#d4a53a'); box(null, i * 0.62, 0.024, -1.75, 0.3, 0.02, 0.3, i % 2 ? '#d4a53a' : '#1d4e6b'); }
+  box(null, 0, 0.74, 0, 4.4, 0.08, 1.5, '#8a5a34'); box(null, 0, 0.785, 0, 4.0, 0.012, 1.1, '#a8713f'); box(null, 0, 0.68, 0, 4.1, 0.06, 1.2, '#6e4526');
+  [-1.7, 1.7].forEach((x) => { box(null, x, 0.36, 0, 0.18, 0.66, 0.9, '#6e4526'); box(null, x, 0.04, 0, 0.3, 0.08, 1.2, '#5a3d24'); });
+  box(null, 0, 0.2, 0, 3.2, 0.08, 0.1, '#5a3d24');
+  canang(null, 0, 0.79, 0); box(null, 0.5, 0.81, 0, 0.22, 0.04, 0.22, '#20242e'); led(null, 0.5, 0.835, 0, 0.05, 0.012, 0.05, '#4fd1a1');
+  [[-1.3, -0.42, 0], [1.3, 0.42, Math.PI], [0, 0.42, Math.PI]].forEach(([x, z, yaw]) => { const b = frame(x, z, yaw); box(b, 0, 0.8, 0, 0.36, 0.02, 0.26, '#8a93a3'); box(b, 0, 0.93, 0.14, 0.36, 0.24, 0.02, '#8a93a3'); led(b, 0, 0.93, 0.128, 0.32, 0.2, 0.008, '#49c6d8'); });
+  [[-0.7, -0.45], [0.7, -0.4], [-0.6, 0.45], [1.9, 0.1], [-1.9, -0.1]].forEach(([x, z], i) => { box(null, x, 0.83, z, 0.085, 0.1, 0.085, i % 2 ? '#ffffff' : '#e8d9b5'); box(null, x, 0.878, z, 0.065, 0.008, 0.065, '#4a2c17'); });
+  [[0, -0.42], [1.3, -0.4], [-1.3, 0.42]].forEach(([x, z]) => box(null, x, 0.79, z, 0.24, 0.012, 0.32, '#ffffff'));
+  box(null, -0.5, 0.86, 0, 0.12, 0.16, 0.12, '#1fa3a3'); box(null, -0.5, 1.0, 0, 0.22, 0.14, 0.22, '#ffffff'); box(null, -0.46, 1.08, 0.03, 0.06, 0.04, 0.06, '#f4d03f');
+  SEATS.forEach(([x, z, yaw]) => {
+    const b = frame(x, z, yaw);
+    box(b, 0, 0.035, 0, 0.5, 0.04, 0.08, '#23272f'); box(b, 0, 0.035, 0, 0.08, 0.04, 0.5, '#23272f'); box(b, 0, 0.24, 0, 0.07, 0.38, 0.07, '#565e6c');
+    box(b, 0, 0.46, 0, 0.5, 0.08, 0.5, '#7a2e2e'); box(b, 0, 0.86, -0.26, 0.48, 0.64, 0.07, '#7a2e2e'); box(b, 0, 1.2, -0.26, 0.5, 0.05, 0.08, '#d4a53a');
+    box(b, -0.28, 0.64, -0.02, 0.05, 0.04, 0.3, '#23272f'); box(b, 0.28, 0.64, -0.02, 0.05, 0.04, 0.3, '#23272f');
+  });
+}
+
+/* ---------- kamers ---------- */
+function furnishRoom(r, agents, deptIdx, stats) {
   const d = r.d, w = r.x1 - r.x0, dz = r.z1 - r.z0, xc = (r.x0 + r.x1) / 2, zc = (r.z0 + r.z1) / 2;
-  // vloer in lichte afdelingskleur + gekleurde rand
-  box(null, xc, 0.01, zc, w, 0.02, dz, d.canteen ? '#c79a66' : tint(d.color, 0.8));
-  const edge = d.color, e = 0.14;
-  box(null, xc, 0.025, r.z0 + e / 2, w, 0.02, e, edge); box(null, xc, 0.025, r.z1 - e / 2, w, 0.02, e, edge);
-  box(null, r.x0 + e / 2, 0.025, zc, e, 0.02, dz, edge); box(null, r.x1 - e / 2, 0.025, zc, e, 0.02, dz, edge);
-  // scheidingswanden (niet waar al een buitenmuur of pui staat)
-  if (r.z0 > -HZ + 0.1) partition(r.x0, r.z0, r.x1, r.z0, r.door === 'n');
-  if (r.z1 < HZ - 0.1) partition(r.x0, r.z1, r.x1, r.z1, r.door === 's');
-  if (r.x0 > -HX + 0.1) partition(r.x0, r.z0, r.x0, r.z1, r.door === 'w');
-  if (r.x1 < HX - 0.1) partition(r.x1, r.z0, r.x1, r.z1, r.door === 'e');
+  const outN = r.z0 <= -HZ + 0.1, outW = r.x0 <= -HX + 0.1, outS = r.z1 >= HZ - 0.1, outE = r.x1 >= HX - 0.1;
+  if (d.canteen) { box(null, xc, 0.01, zc, w, 0.02, dz, '#c79a66'); for (let x = r.x0 + 0.6; x < r.x1; x += 0.6) box(null, x, 0.022, zc, 0.02, 0.004, dz, '#a67c4e'); }
+  else { box(null, xc, 0.01, zc, w, 0.02, dz, tint(d.color, 0.8)); for (let x = r.x0 + 1.25; x < r.x1; x += 1.25) box(null, x, 0.021, zc, 0.02, 0.004, dz, tint(d.color, 0.68)); for (let z = r.z0 + 1.25; z < r.z1; z += 1.25) box(null, xc, 0.021, z, w, 0.004, 0.02, tint(d.color, 0.68)); }
+  const e = 0.14;
+  box(null, xc, 0.026, r.z0 + e / 2, w, 0.02, e, d.color); box(null, xc, 0.026, r.z1 - e / 2, w, 0.02, e, d.color); box(null, r.x0 + e / 2, 0.026, zc, e, 0.02, dz, d.color); box(null, r.x1 - e / 2, 0.026, zc, e, 0.02, dz, d.color);
+  // wanden: noord + west dicht (om aan op te hangen), zuid + oost glas
+  if (!outN) solidWall(r.x0, r.z0, r.x1, r.z0, r.door === 'n', d.color);
+  if (!outW) solidWall(r.x0, r.z0, r.x0, r.z1, r.door === 'w', d.color);
+  if (!outS) partition(r.x0, r.z1, r.x1, r.z1, r.door === 's');
+  if (!outE) partition(r.x1, r.z0, r.x1, r.z1, r.door === 'e');
+  // wandslots
+  const arts = ART[d.name] || ['bars', 'line', 'kanban'], props = PROPS[d.name] || PROP_DEF;
+  let ai = 0, pi = 0, hasCopier = false;
+  function slot(b, solid) {
+    let kind = props[pi % props.length]; pi++;
+    if (kind === 'copier' && (hasCopier || (agents.length < 7 && d.name !== 'OFFICE'))) kind = 'lowcab';
+    if (!solid && (kind === 'bookcase' || kind === 'server' || kind === 'products')) kind = pi % 2 ? 'lowcab' : 'plant';
+    if (d.canteen) kind = pi % 2 ? 'plant' : 'lowcab';
+    if (kind === 'water') waterDispenser(b); else if (kind === 'copier') { copier(b); hasCopier = true; } else if (kind === 'filing') filing(b, 2 + (pi % 2)); else if (kind === 'lowcab') lowcab(b, deptIdx + pi); else if (kind === 'bookcase') bookcase(b, false); else if (kind === 'products') bookcase(b, true); else if (kind === 'cartons') cartons(b); else if (kind === 'server') serverRack(b); else plant(b, 0, 0.42, 1.05, (deptIdx + pi) % 3);
+    if (solid) { if (kind === 'bookcase' || kind === 'server' || kind === 'products') wallClock(b); else wallArt(b, arts[ai++ % arts.length], d.color, kind === 'filing' || kind === 'water' ? 2.4 : 2.3); }
+  }
+  const nSlots = Math.max(1, Math.floor((w - 1.6) / 2.45)), stepX = (w - 1.6) / nSlots;
+  for (let i = 0; i < nSlots; i++) { const x = r.x0 + 0.8 + stepX * (i + 0.5); if (r.door === 'n' && Math.abs(x - xc) < 2.0) continue; slot(frame(x, r.z0 + (outN ? 0.02 : 0.09), 0), !outN); }
+  const zSlots = Math.max(1, Math.floor((dz - 2.4) / 2.45)), stepZ = (dz - 2.4) / zSlots;
+  for (let i = 0; i < zSlots; i++) { const z = r.z0 + 1.6 + stepZ * (i + 0.5); if (r.door === 'w' && Math.abs(z - zc) < 2.0) continue; slot(frame(r.x0 + (outW ? 0.02 : 0.09), z, Math.PI / 2), !outW); }
+  if (outN && outW) { // geen dichte wand: verrijdbaar bord
+    const b = frame(r.x1 - 0.7, zc + 1.2, -Math.PI / 2);
+    box(b, -0.9, 0.9, 0, 0.06, 1.8, 0.06, '#5b6475'); box(b, 0.9, 0.9, 0, 0.06, 1.8, 0.06, '#5b6475'); box(b, -0.9, 0.04, 0, 0.08, 0.08, 0.6, '#5b6475'); box(b, 0.9, 0.04, 0, 0.08, 0.08, 0.6, '#5b6475');
+    wallArt(b, arts[0], d.color, 1.5);
+  }
   if (d.canteen) { canteen(r); return; }
   // bureaus in banken van twee rijen tegenover elkaar
   const n = agents.length;
   let cols = n <= 6 ? Math.ceil(n / 2) : Math.ceil(n / 4);
   cols = Math.max(1, Math.min(cols, Math.floor((w - 2.2) / 1.95)));
   const rows = Math.ceil(n / cols), benches = Math.ceil(rows / 2);
-  const pitch = Math.min(4.7, (dz - 2.6) / Math.max(1, benches));
+  const pitch = Math.min(4.6, (dz - 3.0) / Math.max(1, benches));
   agents.forEach((a, i) => {
-    const c = i % cols, rr = Math.floor(i / cols), b = Math.floor(rr / 2), A = rr % 2 === 0;
-    const x = xc + (c - (cols - 1) / 2) * 1.95;
-    const bc = zc + (b - (benches - 1) / 2) * pitch + 0.3;
-    const z = A ? bc - 1.25 : bc + 1.25;
-    agentsRt.push(station(a, agentsRt.length, x, z, A ? 0 : Math.PI, d.color));
+    const c = i % cols, rr = Math.floor(i / cols), bb = Math.floor(rr / 2), A = rr % 2 === 0;
+    const x = xc + (c - (cols - 1) / 2) * 1.95 + 0.25;
+    const bc = zc + (bb - (benches - 1) / 2) * pitch + 0.45;
+    const s7 = stats[a.workflow_name], star = !!(s7 && Number(s7.runs_7d) >= 5 && Number(s7.pct_ok) === 100);
+    agentsRt.push(station(a, agentsRt.length, x, A ? bc - 1.25 : bc + 1.25, A ? 0 : Math.PI, d, star));
   });
-  // aankleding
-  plant(r.x0 + 0.7, r.z0 + 0.8); plant(r.x1 - 0.7, r.z1 - 0.8, 0.85);
-  if (r.z0 <= -HZ + 0.1) cabinet(xc + (deptIdx % 2 ? 1.6 : -1.6), r.z0 + 0.3, true);
-  else if (r.x0 <= -HX + 0.1) cabinet(r.x0 + 0.3, zc, false);
-  else cabinet(r.x1 - 0.5, r.z1 - 2.2, false);
+  plant(null, r.x1 - 0.7, r.z1 - 0.8, 0.9, deptIdx % 3); if (w > 8) plant(null, r.x1 - 0.7, r.z0 + 1.0, 0.8, (deptIdx + 1) % 3);
 }
 function canteen(r) {
-  const xc = (r.x0 + r.x1) / 2, w = r.x1 - r.x0;
-  // keukenblok tegen de gang-zijde
-  box(null, xc, 0.45, r.z0 + 0.6, Math.min(w - 2.4, 5), 0.9, 0.7, '#f1ede6');
-  box(null, xc, 0.93, r.z0 + 0.6, Math.min(w - 2.4, 5) + 0.1, 0.06, 0.8, '#3b414d');
-  [-1.2, -0.4, 0.4].forEach((o) => { box(null, xc + o, 1.2, r.z0 + 0.6, 0.4, 0.5, 0.4, '#b3202f'); box(null, xc + o, 1.02, r.z0 + 0.85, 0.2, 0.1, 0.12, '#ffffff'); });
-  // statafels
-  [[-1.6, 4], [1.4, 4.6]].forEach(([ox, oz]) => { box(null, xc + ox, 0.55, r.z0 + oz, 0.12, 1.1, 0.12, '#3b414d'); box(null, xc + ox, 1.12, r.z0 + oz, 0.9, 0.06, 0.9, '#f1e3cc'); });
-  // loungehoek: banken + tafel
+  const xc = (r.x0 + r.x1) / 2, w = r.x1 - r.x0, kw = Math.min(w - 3.4, 4.2);
+  const b = frame(r.x1 - 0.1, r.z0 + 3.4, -Math.PI / 2); // keukenblok tegen de oostpui
+  box(b, 0, 0.45, 0.4, kw, 0.9, 0.7, '#f1ede6'); box(b, 0, 0.93, 0.4, kw + 0.1, 0.06, 0.8, '#3b414d');
+  for (let i = 0; i < 4; i++) box(b, -kw / 2 + (i + 0.5) * kw / 4, 0.5, 0.755, 0.03, 0.4, 0.012, '#8a6a45');
+  [-1.2, -0.5].forEach((o) => { box(b, o, 1.2, 0.36, 0.44, 0.5, 0.44, '#b3202f'); box(b, o, 1.47, 0.36, 0.46, 0.05, 0.46, '#20242e'); box(b, o, 1.08, 0.6, 0.2, 0.03, 0.14, '#20242e'); box(b, o, 1.03, 0.62, 0.1, 0.09, 0.1, '#ffffff'); led(b, o + 0.12, 1.32, 0.585, 0.05, 0.05, 0.01, '#4fd1a1'); });
+  [0.3, 0.55, 0.8].forEach((o, i) => { box(b, o, 1.01, 0.4, 0.1, 0.1, 0.1, i % 2 ? '#ffffff' : '#e8d9b5'); });
+  box(b, 1.4, 1.02, 0.4, 0.4, 0.12, 0.3, '#b98b52'); ['#e9c349', '#e67e22', '#c8472f'].forEach((c, i) => box(b, 1.3 + i * 0.1, 1.11, 0.4, 0.1, 0.1, 0.1, c));
+  box(b, kw / 2 + 0.55, 1.0, 0.4, 0.8, 2.0, 0.74, '#dfe3e8'); box(b, kw / 2 + 0.55, 1.25, 0.775, 0.76, 0.012, 0.012, '#8a93a3'); box(b, kw / 2 + 0.22, 1.5, 0.79, 0.04, 0.5, 0.04, '#5b6475'); box(b, kw / 2 + 0.22, 0.7, 0.79, 0.04, 0.6, 0.04, '#5b6475');
+  [[-1.5, 4.4], [1.0, 5.6]].forEach(([ox, oz]) => { const x = xc + ox, z = r.z0 + oz; box(null, x, 0.55, z, 0.12, 1.1, 0.12, '#3b414d'); box(null, x, 0.03, z, 0.5, 0.06, 0.5, '#3b414d'); box(null, x, 1.12, z, 0.95, 0.06, 0.95, '#f1e3cc'); box(null, x - 0.2, 1.2, z + 0.1, 0.085, 0.1, 0.085, '#ffffff'); box(null, x + 0.2, 1.2, z - 0.15, 0.085, 0.1, 0.085, '#e8d9b5'); [-0.75, 0.75].forEach((sx) => { box(null, x + sx, 0.38, z, 0.06, 0.76, 0.06, '#565e6c'); box(null, x + sx, 0.78, z, 0.34, 0.06, 0.34, '#7a4a2a'); box(null, x + sx, 0.3, z, 0.3, 0.03, 0.3, '#565e6c'); }); });
   const lz = r.z1 - 2.6;
-  const sofa = (x, z, alongX) => { const sx = alongX ? 2.2 : 0.9, sz = alongX ? 0.9 : 2.2; box(null, x, 0.28, z, sx, 0.36, sz, '#b3202f'); if (alongX) box(null, x, 0.62, z - 0.34, sx, 0.5, 0.22, '#9a1a27'); else box(null, x - 0.34, 0.62, z, 0.22, 0.5, sz, '#9a1a27'); box(null, x + (alongX ? 0.5 : 0), 0.56, z + (alongX ? 0 : 0.5), 0.36, 0.2, 0.36, '#e9c349'); };
-  sofa(xc - 0.4, lz - 1.2, true); sofa(xc - 2.3, lz + 0.6, false);
-  box(null, xc + 0.1, 0.22, lz + 0.7, 1.1, 0.06, 1.1, '#f4f4f0'); box(null, xc + 0.1, 0.1, lz + 0.7, 0.2, 0.2, 0.2, '#3b414d');
-  box(null, xc + 1.9, 0.22, lz + 0.5, 0.7, 0.44, 0.7, '#8a8f98');
-  plant(r.x1 - 0.8, r.z1 - 0.9, 1.1); plant(r.x0 + 0.8, r.z0 + 2, 0.9);
+  const sofa = (x, z, alongX) => { const sx = alongX ? 2.2 : 0.9, sz = alongX ? 0.9 : 2.2; box(null, x, 0.12, z, sx - 0.1, 0.12, sz - 0.1, '#5a3d24'); box(null, x, 0.32, z, sx, 0.3, sz, '#b3202f'); if (alongX) { box(null, x, 0.66, z - 0.34, sx, 0.5, 0.22, '#9a1a27'); box(null, x - sx / 2 + 0.1, 0.56, z, 0.2, 0.3, sz, '#9a1a27'); box(null, x + sx / 2 - 0.1, 0.56, z, 0.2, 0.3, sz, '#9a1a27'); box(null, x - 0.5, 0.62, z - 0.1, 0.4, 0.34, 0.14, '#e9c349'); box(null, x + 0.5, 0.62, z - 0.1, 0.4, 0.34, 0.14, '#1d4e6b'); } else { box(null, x - 0.34, 0.66, z, 0.22, 0.5, sz, '#9a1a27'); box(null, x, 0.56, z - sz / 2 + 0.1, sx, 0.3, 0.2, '#9a1a27'); box(null, x, 0.56, z + sz / 2 - 0.1, sx, 0.3, 0.2, '#9a1a27'); box(null, x - 0.12, 0.62, z + 0.5, 0.14, 0.34, 0.4, '#f1e3cc'); } };
+  box(null, xc - 0.6, 0.026, lz + 0.2, 4.6, 0.02, 3.6, '#1d4e6b'); box(null, xc - 0.6, 0.032, lz + 0.2, 4.2, 0.02, 3.2, '#f1e3cc');
+  sofa(xc - 0.4, lz - 1.1, true); sofa(xc - 2.5, lz + 0.6, false);
+  box(null, xc - 0.2, 0.3, lz + 0.7, 1.2, 0.07, 1.2, '#8a5a34'); box(null, xc - 0.2, 0.14, lz + 0.7, 0.9, 0.28, 0.9, '#b98b52'); canang(null, xc - 0.2, 0.335, lz + 0.7); box(null, xc + 0.15, 0.36, lz + 0.4, 0.3, 0.04, 0.22, '#c8472f');
+  box(null, xc + 1.6, 0.22, lz + 0.6, 0.7, 0.44, 0.7, '#b98b52'); box(null, xc + 1.6, 0.45, lz + 0.6, 0.74, 0.03, 0.74, '#8a6a45');
+  plant(null, r.x1 - 0.8, r.z1 - 0.9, 1.15, 2); plant(null, r.x0 + 0.9, r.z1 - 0.9, 1.0, 1);
 }
 
-/* ---------- Brain + plein ---------- */
-let brain, brainGlow, plazaRing;
+/* ---------- Brain (video uit office-v2) + plein ---------- */
+let brain, brainAura, plazaRing, brainVid;
 function makeBrain() {
-  brain = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: 0x16407a, emissive: 0x0aa5e6, emissiveIntensity: 0.32, roughness: 0.45, metalness: 0.15, flatShading: true, transparent: true, opacity: 0.9 });
-  const wire = new THREE.LineBasicMaterial({ color: 0x9ff3ff, transparent: true, opacity: 0.45 });
-  [-1, 1].forEach((s) => {
-    const g = new THREE.IcosahedronGeometry(1, 5), p = g.attributes.position, v = new THREE.Vector3();
-    for (let i = 0; i < p.count; i++) {
-      v.fromBufferAttribute(p, i);
-      const n = Math.sin(v.x * 9 + v.y * 4) * Math.sin(v.y * 11 + v.z * 5) + 0.6 * Math.sin(v.z * 13 + v.x * 7);
-      const flat = s * v.x < 0 ? 1 - 0.55 * Math.min(1, -s * v.x * 1.6) : 1; // binnenkant afvlakken: twee helften tegen elkaar
-      v.multiplyScalar(1 + 0.035 * n); v.x *= 0.66 * flat; v.y *= 0.72; v.z *= 1.15; if (v.y < -0.35) v.y = -0.35 + (v.y + 0.35) * 0.45;
-      p.setXYZ(i, v.x, v.y, v.z);
-    }
-    g.computeVertexNormals();
-    const m = new THREE.Mesh(g, mat); m.position.x = s * 0.4; brain.add(m);
-    const l = new THREE.LineSegments(new THREE.EdgesGeometry(g, 14), wire); l.position.x = s * 0.4; brain.add(l);
+  const poster = new THREE.TextureLoader().load(ASSETS2 + 'brain-core.webp'); poster.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { map: { value: poster }, gain: { value: 1.25 } }, transparent: true, depthWrite: false,
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: 'uniform sampler2D map; uniform float gain; varying vec2 vUv; void main(){ vec3 c = texture2D(map, vUv).rgb; float l = max(c.r, max(c.g, c.b)); float a = smoothstep(0.05, 0.42, l); vec2 d = vUv - 0.5; a *= smoothstep(0.5, 0.42, length(d)); gl_FragColor = vec4(c * gain, a); }'
   });
-  const stem = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 1), mat); stem.scale.set(1, 0.8, 1.1); stem.position.set(0, -0.36, -0.7); brain.add(stem);
-  brain.scale.setScalar(2.1); brain.position.set(0, BRAIN_Y, 0);
+  brain = new THREE.Mesh(new THREE.PlaneGeometry(9.6, 8.7), mat); brain.position.set(0, BRAIN_Y, 0); brain.renderOrder = 6;
   const cv = document.createElement('canvas'); cv.width = cv.height = 128; const g2 = cv.getContext('2d');
-  const gr = g2.createRadialGradient(64, 64, 4, 64, 64, 64); gr.addColorStop(0, 'rgba(140,235,255,0.55)'); gr.addColorStop(0.4, 'rgba(60,190,255,0.28)'); gr.addColorStop(1, 'rgba(60,190,255,0)');
+  const gr = g2.createRadialGradient(64, 64, 6, 64, 64, 64); gr.addColorStop(0, 'rgba(8,16,40,0.78)'); gr.addColorStop(0.55, 'rgba(10,24,60,0.5)'); gr.addColorStop(1, 'rgba(10,24,60,0)');
   g2.fillStyle = gr; g2.fillRect(0, 0, 128, 128);
-  brainGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
-  brainGlow.scale.setScalar(9); brainGlow.position.copy(brain.position);
-  const pl = new THREE.PointLight(0x3fd0ff, 26, 20, 1.6); pl.position.set(0, BRAIN_Y - 2.5, 0);
-  plazaRing = new THREE.Mesh(new THREE.RingGeometry(3.6, 3.85, 64), new THREE.MeshBasicMaterial({ color: 0x29c7f5, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
-  plazaRing.rotation.x = -Math.PI / 2; plazaRing.position.set(0, 0.03, 0);
-  const disc = new THREE.Mesh(new THREE.CircleGeometry(3.6, 64), new THREE.MeshBasicMaterial({ color: 0x8fe6ff, transparent: true, opacity: 0.22 }));
-  disc.rotation.x = -Math.PI / 2; disc.position.set(0, 0.028, 0);
-  root.add(brain, brainGlow, pl, plazaRing, disc);
+  brainAura = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthWrite: false, transparent: true })); brainAura.scale.set(12.2, 11, 1); brainAura.position.copy(brain.position); brainAura.renderOrder = 5;
+  const pl = new THREE.PointLight(0x6fa8ff, 30, 24, 1.6); pl.position.set(0, BRAIN_Y - 4, 0);
+  plazaRing = new THREE.Mesh(new THREE.RingGeometry(4.7, 4.95, 72), new THREE.MeshBasicMaterial({ color: 0x29c7f5, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
+  plazaRing.rotation.x = -Math.PI / 2; plazaRing.position.set(0, 0.034, 0);
+  root.add(brainAura, brain, pl, plazaRing);
+  if (!REDUCED) {
+    if (!brainVid) { brainVid = document.createElement('video'); brainVid.muted = true; brainVid.loop = true; brainVid.playsInline = true; brainVid.preload = 'auto'; brainVid.src = ASSETS2 + 'brain-core.mp4'; }
+    const use = () => { const vt = new THREE.VideoTexture(brainVid); vt.colorSpace = THREE.SRGBColorSpace; mat.uniforms.map.value = vt; };
+    if (!brainVid.paused && brainVid.readyState >= 2) use(); else { brainVid.addEventListener('playing', use, { once: true }); const p = brainVid.play(); if (p && p.catch) p.catch(() => {}); }
+  }
 }
 
-/* ---------- vuurballetjes ---------- */
+/* ---------- vuurballetjes + confetti ---------- */
 const FB_MAX = 70, TRAIL = 4;
-let FB, balls = [];
-const BRAIN_P = new THREE.Vector3(0, BRAIN_Y, 0);
+let FB, balls = [], CF, conf = [];
+const BRAIN_P = new THREE.Vector3(0, BRAIN_Y - 0.6, 0);
 function makeFire() {
   FB = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), FB_MAX * TRAIL);
-  FB.frustumCulled = false; FB.count = 0; root.add(FB);
-  balls = [];
+  FB.frustumCulled = false; FB.count = 0; FB.renderOrder = 7; root.add(FB); balls = [];
+  CF = new THREE.InstancedMesh(unitBox, new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), 160); CF.frustumCulled = false; CF.count = 0; root.add(CF); conf = [];
 }
-function fire(rt, toBrain, delay) {
+function fire(from, to, delay) {
   if (balls.length >= FB_MAX) return;
-  const a = toBrain ? rt.head : BRAIN_P, b = toBrain ? BRAIN_P : rt.head;
-  const mid = a.clone().lerp(b, 0.5); mid.y = Math.max(a.y, b.y) * 0.72 + 2.2;
-  balls.push({ a: a.clone(), m: mid, b: b.clone(), t: -(delay || 0), dur: 0.55 + a.distanceTo(b) * 0.012 });
+  const mid = from.clone().lerp(to, 0.5); mid.y = Math.max(from.y, to.y) * 0.72 + 2.2;
+  balls.push({ a: from.clone(), m: mid, b: to.clone(), t: -(delay || 0), dur: 0.55 + from.distanceTo(to) * 0.012 });
 }
-const P1 = new THREE.Vector3(), P2 = new THREE.Vector3();
+const P1 = new THREE.Vector3();
 function bez(o, a, m, b, t) { const u = 1 - t; return o.set(u * u * a.x + 2 * u * t * m.x + t * t * b.x, u * u * a.y + 2 * u * t * m.y + t * t * b.y, u * u * a.z + 2 * u * t * m.z + t * t * b.z); }
 function stepFire(dt) {
   let n = 0;
@@ -442,65 +688,197 @@ function stepFire(dt) {
     if (f.t < 0) continue;
     for (let k = 0; k < TRAIL; k++) {
       const tt = (f.t - k * 0.035) / f.dur; if (tt < 0 || tt > 1) continue;
-      bez(P1, f.a, f.m, f.b, tt);
-      const s = 0.19 * (1 - k * 0.2);
+      bez(P1, f.a, f.m, f.b, tt); const s = 0.19 * (1 - k * 0.2);
       FB.setMatrixAt(n, M.compose(P1, Q.identity(), S3.set(s, s, s)));
       FB.setColorAt(n, k === 0 ? C.setRGB(1, 0.86, 0.35) : C.setRGB(1, 0.5 - k * 0.09, 0.06)); n++;
     }
   }
   FB.count = n; FB.instanceMatrix.needsUpdate = true; if (FB.instanceColor) FB.instanceColor.needsUpdate = true;
+  let c = 0;
+  for (let i = conf.length - 1; i >= 0; i--) {
+    const p = conf[i]; p.t += dt; if (p.t > 4 || p.p.y < 0.05) { conf.splice(i, 1); continue; }
+    p.v.y -= 6 * dt; p.p.addScaledVector(p.v, dt); p.v.multiplyScalar(1 - 0.6 * dt);
+    if (c < 160) { Q.setFromAxisAngle(YAX, p.t * p.s); CF.setMatrixAt(c, M.compose(p.p, Q, S3.set(0.14, 0.02, 0.09))); CF.setColorAt(c, C.set(p.c)); c++; }
+  }
+  CF.count = c; CF.instanceMatrix.needsUpdate = true; if (CF.instanceColor) CF.instanceColor.needsUpdate = true;
 }
 let ambientAcc = 0;
 function ambient(dt) {
   if (REDUCED || !agentsRt.length) return;
-  ambientAcc += dt;
-  if (ambientAcc < 0.3) return; ambientAcc = 0;
-  let tot = 0; const w = agentsRt.map((rt) => { const x = present(rt.a) ? 0.15 + Math.min(Number(rt.a.runs_24h) || 0, 30) + (rt.a.state === 'working' ? 25 : 0) : 0; tot += x; return x; });
+  ambientAcc += dt; if (ambientAcc < 0.3) return; ambientAcc = 0;
+  let tot = 0; const w = agentsRt.map((rt) => { const x = rt.shown ? 0.15 + Math.min(Number(rt.a.runs_24h) || 0, 30) + (rt.a.state === 'working' ? 25 : 0) : 0; tot += x; return x; });
   let r = Math.random() * tot;
-  for (let i = 0; i < w.length; i++) { r -= w[i]; if (r <= 0) { fire(agentsRt[i], true, 0); fire(agentsRt[i], false, 0.75); break; } }
+  for (let i = 0; i < w.length; i++) { r -= w[i]; if (r <= 0) { fire(agentsRt[i].head, BRAIN_P, 0); fire(BRAIN_P, agentsRt[i].head, 0.75); break; } }
 }
-function burst(rt) { for (let k = 0; k < 5; k++) { fire(rt, true, k * 0.09); fire(rt, false, 0.8 + k * 0.09); } }
+function burst(rt) { for (let k = 0; k < 5; k++) { fire(rt.head, BRAIN_P, k * 0.09); fire(BRAIN_P, rt.head, 0.8 + k * 0.09); } }
+
+/* ---------- geluid + order (gong) ---------- */
+const SND = { on: false, ctx: null };
+try { SND.on = localStorage.getItem('dewi.office3.sound') === '1'; } catch (e) {}
+function sndBtn() { $('b-snd').setAttribute('aria-pressed', SND.on ? 'true' : 'false'); $('b-snd').textContent = SND.on ? '♪ Geluid aan' : '♪ Geluid uit'; }
+function sndCtx() { if (!SND.ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) SND.ctx = new AC(); } if (SND.ctx && SND.ctx.state === 'suspended') SND.ctx.resume(); return SND.ctx; }
+function gongSound(vol) { // zelfde boventonen als office-v2
+  if (!SND.on) return; const c = sndCtx(); if (!c) return; const when = c.currentTime + 0.03;
+  [[65.4, 1, 7], [66.6, 0.8, 7], [130.8, 0.32, 4.5], [197.2, 0.16, 3], [262.4, 0.07, 2]].forEach((p) => {
+    const o = c.createOscillator(), g = c.createGain(); o.type = 'sine'; o.frequency.value = p[0];
+    g.gain.setValueAtTime(0.0001, when); g.gain.exponentialRampToValueAtTime(vol * p[1], when + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, when + p[2]);
+    o.connect(g); g.connect(c.destination); o.start(when); o.stop(when + p[2] + 0.05);
+  });
+}
+$('b-snd').addEventListener('click', () => { SND.on = !SND.on; try { localStorage.setItem('dewi.office3.sound', SND.on ? '1' : '0'); } catch (e) {} sndBtn(); if (SND.on) { sndCtx(); gongSound(0.25); } });
+window.addEventListener('pointerdown', () => { if (SND.on) sndCtx(); }, { once: true });
+sndBtn();
+let toastT = null;
+function toast(text, ms) { const el = $('toast'); el.textContent = text; el.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => { el.style.display = 'none'; }, ms || 7000); }
+function ringGong(text) {
+  gongSwing = 1; gongSound(0.5);
+  if (!REDUCED && CF) { const cols = ['#d4a53a', '#e84393', '#ffffff', '#f4d03f', '#1fa3a3', '#a8322d']; for (let i = 0; i < 110; i++) conf.push({ p: new THREE.Vector3(GONG[0] + (Math.random() - 0.5), 2.2 + Math.random(), GONG[1] + (Math.random() - 0.5) * 0.4), v: new THREE.Vector3((Math.random() - 0.5) * 7, 4 + Math.random() * 6, (Math.random() - 0.5) * 7), t: 0, s: 4 + Math.random() * 8, c: cols[i % cols.length] }); }
+  if (text) toast(text);
+}
+let SBX = null; try { if (window.supabase && SB_KEY && !DEMO) SBX = window.supabase.createClient(SB_URL, SB_KEY); } catch (e) { SBX = null; }
+const ORD = { seen: null }; try { const so = JSON.parse(localStorage.getItem('dewi.office3.orders') || 'null'); if (so && typeof so === 'object') ORD.seen = so; } catch (e) {}
+function loadPrivate() {
+  if (!SBX) { $('lg-auth').textContent = DEMO ? '' : ' (log in via de Cockpit)'; return; }
+  SBX.auth.getSession().then((r) => {
+    const ses = r && r.data && r.data.session; $('lg-auth').textContent = ses ? '' : ' (log in via de Cockpit)';
+    if (!ses) return;
+    const since = new Date(Date.now() - 48 * 3600e3).toISOString();
+    return SBX.from('bridge_open_orders').select('order_gid,order_name,order_created_at,line_item_count').eq('source_name', 'web').gte('order_created_at', since).then((res) => {
+      if (!res || res.error) return;
+      const firstTime = !ORD.seen, seen = ORD.seen || {}, fresh = [];
+      (res.data || []).forEach((o) => { const t = Date.parse(o.order_created_at) || Date.now(); if (!firstTime && !seen[o.order_gid] && Date.now() - t < 12 * 3600e3) fresh.push(o); seen[o.order_gid] = t; });
+      const cut = Date.now() - 7 * 864e5; Object.keys(seen).forEach((k) => { if (seen[k] < cut) delete seen[k]; });
+      ORD.seen = seen; try { localStorage.setItem('dewi.office3.orders', JSON.stringify(seen)); } catch (e) {}
+      fresh.slice(0, 3).forEach((o, i) => setTimeout(() => { const n = Number(o.line_item_count) || 0; ringGong('Nieuwe online bestelling ' + (o.order_name || '') + (n ? ' · ' + n + (n === 1 ? ' artikel' : ' artikelen') : '')); }, 600 + i * 6500));
+    });
+  }).catch(() => {});
+}
+
+/* ---------- lopers + overleg ---------- */
+function makeWalker(rt) {
+  const g = new THREE.Group(), L = (col) => new THREE.MeshLambertMaterial({ color: col });
+  const add = (parent, x, y, z, sx, sy, sz, col) => { const m = new THREE.Mesh(unitBox, L(col)); m.position.set(x, y, z); m.scale.set(sx, sy, sz); m.castShadow = true; parent.add(m); return m; };
+  const legL = new THREE.Group(), legR = new THREE.Group(); legL.position.set(-0.11, 0.8, 0); legR.position.set(0.11, 0.8, 0);
+  add(legL, 0, -0.36, 0, 0.17, 0.72, 0.19, '#2c3140'); add(legL, 0, -0.75, 0.04, 0.18, 0.1, 0.28, '#1b1e26');
+  add(legR, 0, -0.36, 0, 0.17, 0.72, 0.19, '#2c3140'); add(legR, 0, -0.75, 0.04, 0.18, 0.1, 0.28, '#1b1e26');
+  const armL = new THREE.Group(), armR = new THREE.Group(); armL.position.set(-0.3, 1.3, 0); armR.position.set(0.3, 1.3, 0);
+  add(armL, 0, -0.22, 0, 0.12, 0.46, 0.14, rt.color); add(armL, 0, -0.5, 0, 0.11, 0.1, 0.12, rt.skin);
+  add(armR, 0, -0.22, 0, 0.12, 0.46, 0.14, rt.color); add(armR, 0, -0.5, 0, 0.11, 0.1, 0.12, rt.skin);
+  add(g, 0, 1.08, 0, 0.46, 0.56, 0.27, rt.color); add(g, 0, 1.6, 0.02, 0.5, 0.46, 0.46, rt.skin);
+  add(g, 0, 1.86, 0, 0.54, 0.14, 0.5, rt.hair); add(g, 0, 1.67, -0.22, 0.54, 0.36, 0.1, rt.hair);
+  add(g, -0.11, 1.62, 0.255, 0.06, 0.08, 0.02, '#1a1a1e'); add(g, 0.11, 1.62, 0.255, 0.06, 0.08, 0.02, '#1a1a1e');
+  g.add(legL, legR, armL, armR); g.userData = { legL, legR, armL, armR };
+  return g;
+}
+function doorPts(r) {
+  const xc = (r.x0 + r.x1) / 2, zc = (r.z0 + r.z1) / 2;
+  if (r.door === 's') return [new THREE.Vector3(xc, 0, r.z1 - 0.9), new THREE.Vector3(xc, 0, r.z1 + COR / 2)];
+  if (r.door === 'n') return [new THREE.Vector3(xc, 0, r.z0 + 0.9), new THREE.Vector3(xc, 0, r.z0 - COR / 2)];
+  if (r.door === 'e') return [new THREE.Vector3(r.x1 - 0.9, 0, zc), new THREE.Vector3(r.x1 + COR / 2, 0, zc)];
+  return [new THREE.Vector3(r.x0 + 0.9, 0, zc), new THREE.Vector3(r.x0 - COR / 2, 0, zc)];
+}
+function routeTo(rt, r, seat) {
+  const side = new THREE.Vector3(-0.75, 0, -0.1).applyMatrix4(rt.base), dp = doorPts(r), pts = [side, dp[0], dp[1]];
+  const sx = seat[0], sz = seat[1], end = Math.abs(sx) > 2;
+  let ap = dp[1];
+  if (r.row !== 1) { ap = new THREE.Vector3(Math.max(-4.2, Math.min(4.2, dp[1].x)), 0, dp[1].z); if (ap.x !== dp[1].x) pts.push(ap); }
+  const out = new THREE.Vector3(sx + (end ? Math.sign(sx) * 0.9 : 0), 0, sz + (end ? 0 : Math.sign(sz) * 0.95));
+  const s = Math.sign(ap.x) || Math.sign(sx) || 1;
+  if (end) { if (Math.sign(ap.x || sx) !== Math.sign(sx) || Math.abs(ap.z) > 1.5) pts.push(new THREE.Vector3(Math.sign(sx) * 3.9, 0, (Math.sign(ap.z) || 1) * 2.3)); }
+  else if (Math.abs(ap.z) > 1.5 && Math.sign(ap.z) !== Math.sign(sz)) pts.push(new THREE.Vector3(s * 3.9, 0, Math.sign(ap.z) * 2.3), new THREE.Vector3(s * 3.9, 0, Math.sign(sz) * 2.3));
+  else if (Math.abs(ap.z) <= 1.5) pts.push(new THREE.Vector3(s * 3.9, 0, Math.sign(sz) * 2.3));
+  pts.push(out, new THREE.Vector3(sx, 0, sz));
+  return pts;
+}
+let meet = null;
+function meeting(list) {
+  if (meet || !list || list.length < 2) return false;
+  const members = [];
+  list.slice(0, 8).forEach((rt, i) => {
+    if (!rt || !rt.shown || rt.away) return;
+    const r = rooms.find((q) => rt.idx >= q.first && rt.idx < q.first + q.count); if (!r) return;
+    const seat = SEATS[members.length]; rt.away = true; showBody(rt, false);
+    const w = makeWalker(rt), path = routeTo(rt, r, seat); w.position.copy(path[0]); root.add(w);
+    members.push({ rt, w, path, seg: 0, seat, phase: 'go', wait: i * 0.5, sw: Math.random() * 6 });
+  });
+  if (!members.length) return false;
+  meet = { members, t: 0, sit: 0 };
+  return true;
+}
+function poseWalk(m, moving, t) {
+  const u = m.w.userData, s = moving ? Math.sin(t * 9 + m.sw) * 0.7 : 0;
+  u.legL.rotation.x = s; u.legR.rotation.x = -s; u.armL.rotation.x = -s * 0.8; u.armR.rotation.x = s * 0.8; m.w.position.y = moving ? Math.abs(Math.sin(t * 9 + m.sw)) * 0.04 : 0;
+}
+function poseSit(m, t) { const u = m.w.userData; u.legL.rotation.x = u.legR.rotation.x = -Math.PI / 2; u.armL.rotation.x = -1.1 + Math.sin(t * 2 + m.sw) * 0.12; u.armR.rotation.x = -1.1 + Math.sin(t * 2.3 + m.sw + 1) * 0.12; m.w.position.y = -0.3; }
+function endWalker(m) { root.remove(m.w); m.w.traverse((o) => { if (o.material) o.material.dispose(); }); m.rt.away = false; showBody(m.rt, present(m.rt.a)); m.phase = 'done'; }
+function stepMeet(dt, t) {
+  if (!meet) return; meet.t += dt;
+  const SPEED = REDUCED ? 30 : 3.6; let allSeated = true;
+  meet.members.forEach((m) => {
+    if (m.phase === 'go' || m.phase === 'back') {
+      allSeated = false;
+      if (m.wait > 0) { m.wait -= dt; poseWalk(m, false, t); return; }
+      const target = m.path[m.seg + 1];
+      if (!target) { if (m.phase === 'go') { m.phase = 'sit'; m.w.rotation.y = m.seat[2]; } else endWalker(m); return; }
+      const dx = target.x - m.w.position.x, dz = target.z - m.w.position.z, dist = Math.hypot(dx, dz), stp = SPEED * dt;
+      if (dist <= stp) { m.w.position.x = target.x; m.w.position.z = target.z; m.seg++; } else { m.w.position.x += dx / dist * stp; m.w.position.z += dz / dist * stp; m.w.rotation.y = Math.atan2(dx, dz); }
+      poseWalk(m, true, t);
+    } else if (m.phase === 'sit') { poseSit(m, t); if (!REDUCED && Math.random() < dt * 0.5) fire(new THREE.Vector3(m.seat[0], 1.5, m.seat[1]), BRAIN_P, 0); }
+  });
+  if (meet.sit === 0 && allSeated) meet.sit = meet.t;
+  if (meet.sit && meet.t - meet.sit > 25 && meet.members.some((m) => m.phase === 'sit')) {
+    meet.members.forEach((m, i) => { if (m.phase === 'sit') { m.phase = 'back'; m.path = m.path.slice().reverse(); m.seg = 0; m.wait = i * 0.4; m.w.position.y = 0; } });
+  }
+  if (meet.t > 240) meet.members.forEach((m) => { if (m.phase !== 'done') endWalker(m); });
+  if (meet.members.every((m) => m.phase === 'done')) meet = null;
+}
 
 /* ---------- opbouw ---------- */
 function disposeRoot() {
   if (!root) return;
-  root.traverse((o) => { if (o.geometry && o.geometry !== unitBox) o.geometry.dispose(); if (o.material) { (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); }); } });
-  scene.remove(root); $('labels').innerHTML = '';
+  root.traverse((o) => { if (o.geometry && o.geometry !== unitBox && o.geometry !== artGeo) o.geometry.dispose(); if (o.material && !o.material.map) { (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose()); } });
+  scene.remove(root); $('labels').innerHTML = ''; meet = null;
 }
+let meetLabel;
 function build(data) {
   disposeRoot();
   root = new THREE.Group(); scene.add(root);
-  BX = new THREE.InstancedMesh(unitBox, new THREE.MeshLambertMaterial({ color: 0xffffff }), CAP);
-  BX.castShadow = true; BX.receiveShadow = true; BX.frustumCulled = false;
-  SCR = new THREE.InstancedMesh(unitBox, new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), 400); SCR.frustumCulled = false;
-  GL = new THREE.InstancedMesh(unitBox, new THREE.MeshLambertMaterial({ color: 0xbfe2ff, transparent: true, opacity: 0.2, depthWrite: false }), 1200); GL.frustumCulled = false; GL.renderOrder = 2;
-  bxN = scrN = glN = 0; owner = new Int16Array(CAP).fill(-1); agentsRt = []; deptLabels = [];
-  // grond buiten + onzichtbaar dak dat schaduw werpt (zon komt alleen door de ramen)
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: 0xe9edf2 }));
-  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.5; ground.receiveShadow = true; root.add(ground);
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.7, 0.1, D + 0.7), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
-  roof.position.set(-0.3, WALL_H + 0.05, -0.3); roof.castShadow = true; roof.renderOrder = -1; root.add(roof);
+  BX = new THREE.InstancedMesh(unitBox, new THREE.MeshLambertMaterial({ color: 0xffffff }), CAP); BX.castShadow = true; BX.receiveShadow = true; BX.frustumCulled = false;
+  ARM = new THREE.InstancedMesh(unitBox, new THREE.MeshLambertMaterial({ color: 0xffffff }), ACAP); ARM.castShadow = true; ARM.frustumCulled = false;
+  SCR = new THREE.InstancedMesh(unitBox, new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), SCAP); SCR.frustumCulled = false;
+  GL = new THREE.InstancedMesh(unitBox, new THREE.MeshLambertMaterial({ color: 0xbfe2ff, transparent: true, opacity: 0.2, depthWrite: false }), GCAP); GL.frustumCulled = false; GL.renderOrder = 2;
+  bxN = armN = scrN = glN = 0; owner = new Int16Array(CAP).fill(-1); ownerA = new Int16Array(ACAP).fill(-1); agentsRt = [];
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: 0xe9edf2 })); ground.rotation.x = -Math.PI / 2; ground.position.y = -0.5; ground.receiveShadow = true; root.add(ground);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 0.8, 0.1, D + 0.8), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false })); roof.position.set(-0.3, WALL_H + 0.05, -0.3); roof.castShadow = true; roof.renderOrder = -1; root.add(roof);
 
   building();
-  const byDept = {};
-  data.agents.forEach((a) => { (byDept[a.dept_name] = byDept[a.dept_name] || []).push(a); });
+  const stats = {}; (data.stats || []).forEach((s) => { stats[s.workflow] = s; });
+  const byDept = {}; data.agents.forEach((a) => { (byDept[a.dept_name] = byDept[a.dept_name] || []).push(a); });
   const depts = data.depts.map((d) => ({ name: d.dept_name, color: d.dept_color || '#8899aa', sort: d.dept_sort || 0, n: (byDept[d.dept_name] || []).length })).filter((d) => d.n > 0);
   rooms = layout(depts);
   rooms.forEach((r, i) => {
     const list = (byDept[r.d.name] || []).slice().sort((a, b) => (a.agent_sort || 0) - (b.agent_sort || 0) || String(a.agent_name).localeCompare(String(b.agent_name)));
-    r.first = agentsRt.length; furnishRoom(r, list, i); r.count = agentsRt.length - r.first;
-    const el = document.createElement('button'); el.type = 'button'; el.className = 'lb dept';
-    el.addEventListener('click', () => focusRoom(r)); $('labels').appendChild(el);
-    r.label = el; r.anchor = new THREE.Vector3((r.x0 + r.x1) / 2, 3.5, (r.z0 + r.z1) / 2);
+    r.first = agentsRt.length; furnishRoom(r, list, i, stats); r.count = agentsRt.length - r.first;
+    const el = document.createElement('button'); el.type = 'button'; el.className = 'lb dept'; el.addEventListener('click', () => focusRoom(r)); $('labels').appendChild(el);
+    r.label = el; r.anchor = new THREE.Vector3((r.x0 + r.x1) / 2, 4.2, (r.z0 + r.z1) / 2);
   });
-  agentsRt.forEach((rt) => {
-    const el = document.createElement('div'); el.className = 'lb agent'; el.style.display = 'none'; $('labels').appendChild(el);
-    rt.label = el; rt.anchor = rt.head.clone().setY(2.25);
-  });
-  BX.count = bxN; SCR.count = scrN; GL.count = glN;
-  [BX, SCR, GL].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; root.add(m); });
+  // plein: vergadertafel, gong, parasols, frangipani; gangen: kopieerhoek, water, bankjes
+  meetingTable(); gongStand(GONG[0], GONG[1]); tedung(-2.4, -5.0, '#f4d03f'); tedung(2.4, -5.0, '#ffffff');
+  [[-4.3, 4.3], [4.3, 4.3], [-4.4, -4.2], [4.4, -4.2]].forEach(([x, z]) => plant(null, x, z, 1.5, 2));
+  const RD = (D - 2 * COR) / 3, cz1 = -HZ + RD + COR / 2, cz2 = -HZ + 2 * RD + COR * 1.5;
+  copier(frame(-HX + 0.05, cz1, Math.PI / 2)); waterDispenser(frame(-HX + 0.05, cz2, Math.PI / 2));
+  [[HX - 1.2, cz1]].forEach(([x, z], i) => { box(null, x, 0.42, z, 0.5, 0.08, 1.8, '#8a5a34'); [[-0.2, -0.7], [0.2, -0.7], [-0.2, 0.7], [0.2, 0.7]].forEach(([ox, oz]) => box(null, x + ox, 0.2, z + oz, 0.08, 0.4, 0.08, '#5a3d24')); box(null, x, 0.5, z + (i ? 0.4 : -0.4), 0.4, 0.1, 0.4, i ? '#1d4e6b' : '#7a2e2e'); });
+  // ingang: candi bentar, wachters, penjors
+  const gate = candiBentar(HX + 2.0, ENTRY_Z, Math.PI / 2); const GF = (lx, lz) => gate.clone().multiply(frame(lx, lz, 0));
+  guardian(GF(-4.4, 0.2)); guardian(GF(4.4, 0.2)); penjor(GF(-6.0, 0.4), 1); penjor(GF(6.0, 0.4), -1);
+
+  agentsRt.forEach((rt) => { setArms(rt, 0); const el = document.createElement('div'); el.className = 'lb agent'; el.style.display = 'none'; $('labels').appendChild(el); rt.label = el; rt.anchor = rt.head.clone().setY(2.3); });
+  meetLabel = document.createElement('div'); meetLabel.className = 'lb meet'; meetLabel.textContent = 'Overleg'; meetLabel.style.display = 'none'; $('labels').appendChild(meetLabel);
+  BX.count = bxN; ARM.count = armN; SCR.count = scrN; GL.count = glN;
+  [BX, ARM, SCR, GL].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; root.add(m); });
   makeBrain(); makeFire();
   sel = null; focus = null; renderSide();
+  if (bxN >= CAP || scrN >= SCAP || glN >= GCAP) console.warn('[office-v3] capaciteit bereikt', bxN, scrN, glN);
 }
 function keyOf(data) { return data.depts.map((d) => d.dept_name).join('|') + '#' + data.agents.map((a) => a.agent_id).sort().join(','); }
 
@@ -510,17 +888,18 @@ function apply(data) {
   if (k !== structKey) { structKey = k; build(data); }
   const byId = {}; data.agents.forEach((a) => { byId[a.agent_id] = a; });
   stats7 = {}; (data.stats || []).forEach((s) => { stats7[s.workflow] = s; });
-  let work = 0, err = 0, runs = 0;
+  let work = 0, err = 0, runs = 0; const fresh = [];
   agentsRt.forEach((rt) => {
     const a = byId[rt.a.agent_id] || rt.a; rt.a = a;
     SCR.setColorAt(rt.scr, C.set(SCREEN[a.state] || SCREEN.ok));
-    showBody(rt, present(a));
+    showBody(rt, present(a) && !rt.away);
     if (a.state === 'working') work++; if (a.state === 'error') err++; runs += Number(a.runs_24h) || 0;
-    if (!first && a.last_run_at && lastRun[a.agent_id] && lastRun[a.agent_id] !== a.last_run_at && !REDUCED) burst(rt);
+    if (!first && a.last_run_at && lastRun[a.agent_id] && lastRun[a.agent_id] !== a.last_run_at) { if (!REDUCED) burst(rt); fresh.push(rt); }
     lastRun[a.agent_id] = a.last_run_at;
     rt.label.textContent = a.agent_name; rt.label.className = 'lb agent' + (a.state === 'error' ? ' err' : '');
   });
   SCR.instanceColor.needsUpdate = true;
+  if (fresh.length >= 3) meeting(fresh);
   rooms.forEach((r) => {
     let e = 0; for (let i = r.first; i < r.first + r.count; i++) if (agentsRt[i].a.state === 'error') e++;
     r.label.innerHTML = '<i style="background:' + esc(r.d.color) + '"></i>' + esc(r.d.name) + (r.d.canteen ? ' <em>pauze</em>' : ' <em>' + r.count + '</em>') + (e ? ' <span class="bad">' + e + ' fout</span>' : '');
@@ -530,6 +909,7 @@ function apply(data) {
   first = false; if (sel) renderSide();
 }
 function refresh() {
+  loadPrivate();
   return fetchAll().then((d) => { $('msg').style.display = 'none'; apply(d); })
     .catch((e) => { if (!agentsRt || !agentsRt.length) { $('msg').style.display = 'block'; $('msg').textContent = 'Data laden mislukt: ' + e.message; } console.warn('[office-v3]', e); });
 }
@@ -541,7 +921,7 @@ function focusRoom(r) {
   if (focus === r) { goHome(); return; }
   focus = r;
   const t = new THREE.Vector3((r.x0 + r.x1) / 2, 1, (r.z0 + r.z1) / 2);
-  flyTo(t.clone().add(new THREE.Vector3(11, 15, 17)), t);
+  flyTo(t.clone().add(new THREE.Vector3(10, 15, 17)), t);
 }
 function goHome() { focus = null; flyTo(HOME.pos.clone(), HOME.tgt.clone()); }
 $('b-home').addEventListener('click', goHome);
@@ -552,19 +932,23 @@ function pick(ev) {
   const b = renderer.domElement.getBoundingClientRect();
   ptr.set(((ev.clientX - b.left) / b.width) * 2 - 1, -((ev.clientY - b.top) / b.height) * 2 + 1);
   ray.setFromCamera(ptr, camera);
-  const hit = ray.intersectObject(BX, false)[0];
+  const gh = gongDisc ? ray.intersectObject(gongDisc, true)[0] : null;
+  const h1 = ray.intersectObject(BX, false)[0], h2 = ray.intersectObject(ARM, false)[0];
+  let hit = h1, own = owner; if (h2 && (!h1 || h2.distance < h1.distance)) { hit = h2; own = ownerA; }
+  if (gh && (!hit || gh.distance < hit.distance)) return { gong: true };
   if (!hit || hit.instanceId == null) return null;
-  const o = owner[hit.instanceId]; return o >= 0 ? agentsRt[o] : null;
+  const o = own[hit.instanceId]; return o >= 0 ? agentsRt[o] : null;
 }
 let downAt = null, lastMove = 0;
 renderer.domElement.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || !BX) return;
-  const rt = pick(e); sel = rt || null; renderSide();
+  const rt = pick(e); if (rt && rt.gong) { ringGong(SND.on ? '' : 'Gong — zet ♪ Geluid aan om hem te horen'); return; }
+  sel = rt || null; renderSide();
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
-  const now = performance.now(); if (now - lastMove < 60 || !BX || e.buttons) return; lastMove = now;
-  hover = pick(e); renderer.domElement.style.cursor = hover ? 'pointer' : 'grab';
+  const now = performance.now(); if (now - lastMove < 70 || !BX || e.buttons) return; lastMove = now;
+  const p = pick(e); hover = p && !p.gong ? p : null; renderer.domElement.style.cursor = p ? 'pointer' : 'grab';
 });
 
 const STATE_NL = { working: ['Bezig', '#00d4ff'], ok: ['In orde', '#4fd1a1'], error: ['Fout', '#ff5d5d'], silent: ['Stil', '#ffd400'], paused: ['Gepauzeerd', '#9fb0c8'], idle: ['Nog nooit gedraaid', '#9fb0c8'] };
@@ -598,50 +982,39 @@ function renderSide() {
 }
 
 /* ---------- lus ---------- */
-function resize() {
-  const w = stage.clientWidth, h = stage.clientHeight;
-  renderer.setSize(w, h, false); camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix();
-}
+function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix(); }
 window.addEventListener('resize', resize); resize();
-const PV = new THREE.Vector3();
+const PV = new THREE.Vector3(), MEET_A = new THREE.Vector3(0, 2.6, 0);
 function place(el, v, show) {
+  if (show) { PV.copy(v).project(camera); if (PV.z > 1 || Math.abs(PV.x) > 1.1 || Math.abs(PV.y) > 1.1) show = false; }
   if (!show) { if (el._on !== false) { el.style.display = 'none'; el._on = false; } return; }
-  PV.copy(v).project(camera);
-  if (PV.z > 1 || Math.abs(PV.x) > 1.1 || Math.abs(PV.y) > 1.1) { if (el._on !== false) { el.style.display = 'none'; el._on = false; } return; }
   if (el._on !== true) { el.style.display = ''; el._on = true; }
   el.style.transform = 'translate(-50%,-100%) translate(' + ((PV.x * 0.5 + 0.5) * stage.clientWidth).toFixed(1) + 'px,' + ((-PV.y * 0.5 + 0.5) * stage.clientHeight).toFixed(1) + 'px)';
 }
 let lastT = performance.now(), time = 0;
-function frame() {
+function tick() {
   const nowT = performance.now(), dt = Math.min((nowT - lastT) / 1000, 0.05); lastT = nowT; time += dt;
   if (fly) { fly.t = Math.min(1, fly.t + dt / 0.9); const e = fly.t * fly.t * (3 - 2 * fly.t); camera.position.lerpVectors(fly.p0, fly.p1, e); controls.target.lerpVectors(fly.t0, fly.t1, e); if (fly.t >= 1) fly = null; }
   controls.update();
   if (root && agentsRt) {
-    if (brain && !REDUCED) { brain.position.y = BRAIN_Y + Math.sin(time * 0.9) * 0.28; brain.rotation.y = time * 0.25; brainGlow.position.copy(brain.position); brainGlow.material.opacity = 0.8 + Math.sin(time * 2.1) * 0.15; plazaRing.material.opacity = 0.65 + Math.sin(time * 2.1) * 0.2; }
-    if (!REDUCED) {
-      // typen: armen wippen; sneller en hoger bij 'working'
-      for (let i = 0; i < agentsRt.length; i++) {
-        const rt = agentsRt[i]; if (!rt.shown) continue;
-        const wk = rt.a.state === 'working', sp = wk ? 13 : 4.5, amp = wk ? 0.035 : 0.014;
-        BX.setMatrixAt(rt.armL, compose(rt.base, -0.29, 0.86 + Math.max(0, Math.sin(time * sp + rt.phase)) * amp, 0.3, 0.12, 0.12, 0.46));
-        BX.setMatrixAt(rt.armR, compose(rt.base, 0.29, 0.86 + Math.max(0, Math.sin(time * sp + rt.phase + 2.1)) * amp, 0.3, 0.12, 0.12, 0.46));
-      }
-      BX.instanceMatrix.needsUpdate = true;
-    }
-    ambient(dt); if (FB) stepFire(dt);
-    rooms.forEach((r) => { r.anchor.y = focus === r ? 6.2 : 3.5; place(r.label, r.anchor, true); });
-    for (let i = 0; i < agentsRt.length; i++) {
-      const rt = agentsRt[i];
-      const inFocus = focus && i >= focus.first && i < focus.first + focus.count;
-      place(rt.label, rt.anchor, inFocus || rt === hover || rt === sel || rt.a.state === 'error');
-    }
+    if (brain) { brain.quaternion.copy(camera.quaternion); if (!REDUCED) { brain.position.y = BRAIN_Y + Math.sin(time * 0.9) * 0.3; brainAura.position.copy(brain.position); plazaRing.material.opacity = 0.6 + Math.sin(time * 2.1) * 0.25; } }
+    if (!REDUCED) { for (let i = 0; i < agentsRt.length; i++) setArms(agentsRt[i], time); ARM.instanceMatrix.needsUpdate = true; }
+    if (gongDisc) { if (gongSwing > 0.002) { gongSwing *= Math.exp(-dt * 0.9); gongDisc.rotation.x = Math.sin(time * 7) * 0.22 * gongSwing; } else gongDisc.rotation.x = 0; }
+    ambient(dt); stepMeet(dt, time); if (FB) stepFire(dt);
+    rooms.forEach((r) => { r.anchor.y = focus === r ? 6.4 : 4.2; place(r.label, r.anchor, true); });
+    for (let i = 0; i < agentsRt.length; i++) { const rt = agentsRt[i]; const inFocus = focus && i >= focus.first && i < focus.first + focus.count; place(rt.label, rt.anchor, !rt.away && (inFocus || rt === hover || rt === sel || rt.a.state === 'error')); }
+    place(meetLabel, MEET_A, !!(meet && meet.members.some((m) => m.phase === 'sit')));
   }
   renderer.render(scene, camera);
-  requestAnimationFrame(frame);
+  requestAnimationFrame(tick);
 }
-window.__office3 = { get agents() { return agentsRt; }, get rooms() { return rooms; }, focusRoom, goHome, burst, camera, controls };
-refresh().then(() => { setInterval(refresh, 60000); });
-requestAnimationFrame(frame);
+const dbgStep = (n) => { for (let i = 0; i < n; i++) { time += 0.05; stepMeet(0.05, time); stepFire(0.05); } };
+window.__office3 = { step: dbgStep, get agents() { return agentsRt; }, get rooms() { return rooms; }, get meet() { return meet; }, get counts() { return [bxN, armN, scrN, glN]; }, focusRoom, goHome, burst, meeting, ringGong, camera, controls };
+refresh().then(() => {
+  setInterval(refresh, 60000);
+  if (DEMO) { setTimeout(() => meeting([3, 20, 41, 58, 77, 90, 100].map((i) => agentsRt[i])), 2500); setTimeout(() => ringGong('Nieuwe online bestelling #DEMO · 2 artikelen'), 9000); }
+});
+requestAnimationFrame(tick);
 </script>
 </body>
 </html>
