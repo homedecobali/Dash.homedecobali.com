@@ -57,6 +57,7 @@
     ]},
     { id: "views", label: "Views", items: [
       { id: "office2", label: "Office v2", url: "office-v2.html", ic: "\u25C7", c: "#a37bff", kw: "office v2 kantoor brain pijpen bureaus zoom gerenderd isometrisch afdelingen agents" },
+      { id: "office3", label: "Office v3 (3D)", url: "office-v3.html", ic: "\u25C6", c: "#a37bff", kw: "office v3 3d kantoor brain vergadertafel kantine gong afdelingen agents prototype" },
       { id: "org",     label: "Org Chart", pane: "org", url: "organisation.html", ic: "\u2261", c: "#a37bff", kw: "organigram organisatie org chart agents afdelingen alarm" }
     ]},
     { id: "systeem", label: "System", items: [
